@@ -25,12 +25,15 @@ class GitHubClient:
     def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
         repo = self.get_json(f"/repos/{owner}/{name}")
+        if not isinstance(repo, dict):
+            raise GitHubError(f"Expected repository object for /repos/{owner}/{name}.")
+
         root_entries = set(self._content_names(owner, name, ""))
         github_entries = {
             f".github/{entry}" for entry in self._content_names(owner, name, ".github")
         }
         workflow_entries = set(self._content_names(owner, name, ".github/workflows"))
-        closed_prs = self.get_json(
+        closed_prs = self._get_list(
             f"/repos/{owner}/{name}/pulls",
             {
                 "state": "closed",
@@ -38,18 +41,14 @@ class GitHubClient:
                 "direction": "desc",
                 "per_page": "100",
             },
+            "closed pull requests",
         )
-        open_prs = self.get_json(
-            f"/repos/{owner}/{name}/pulls",
-            {
-                "state": "open",
-                "per_page": "100",
-            },
+        labels = self._get_list(
+            f"/repos/{owner}/{name}/labels", {"per_page": "100"}, "repository labels"
         )
-        labels = self.get_json(f"/repos/{owner}/{name}/labels", {"per_page": "100"})
         open_issue_items = [
             issue
-            for issue in self.get_json(
+            for issue in self._get_list(
                 f"/repos/{owner}/{name}/issues",
                 {
                     "state": "open",
@@ -57,10 +56,13 @@ class GitHubClient:
                     "direction": "desc",
                     "per_page": "100",
                 },
+                "open issues",
             )
             if "pull_request" not in issue
         ]
         latest_maintainer_comments = self._latest_maintainer_issue_comments(owner, name)
+        open_pr_count = self._search_issue_count(owner, name, "pr")
+        open_issue_count = self._search_issue_count(owner, name, "issue")
 
         merged_prs = tuple(pr for pr in closed_prs if pr.get("merged_at"))
 
@@ -78,18 +80,14 @@ class GitHubClient:
             root_entries=frozenset(root_entries | github_entries),
             workflow_entries=frozenset(workflow_entries),
             merged_prs=merged_prs,
-            open_pr_count=len(open_prs),
+            open_pr_count=open_pr_count,
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
             open_issues=tuple(
                 IssueSnapshot(
                     number=int(issue.get("number") or 0),
-                    labels=tuple(
-                        label["name"]
-                        for label in issue.get("labels", [])
-                        if isinstance(label, dict) and "name" in label
-                    ),
+                    labels=_issue_label_names(issue),
                     created_at=parse_datetime(issue.get("created_at")),
                     updated_at=parse_datetime(issue.get("updated_at")),
                     comment_count=int(issue.get("comments") or 0),
@@ -100,6 +98,7 @@ class GitHubClient:
                 )
                 for issue in open_issue_items
             ),
+            open_issue_count=open_issue_count,
         )
 
     def fetch_file_text(self, repository: str, path: str) -> str | None:
@@ -134,6 +133,21 @@ class GitHubClient:
         except urllib.error.URLError as exc:
             raise GitHubError(f"Could not reach GitHub API: {exc.reason}") from exc
 
+    def _get_list(
+        self,
+        path: str,
+        params: dict[str, str] | None,
+        description: str,
+    ) -> list[dict[str, Any]]:
+        payload = self.get_json(path, params)
+        if not isinstance(payload, list):
+            raise GitHubError(f"Expected a list for {description} from {path}.")
+
+        bad_item = next((item for item in payload if not isinstance(item, dict)), None)
+        if bad_item is not None:
+            raise GitHubError(f"Expected {description} items from {path} to be objects.")
+        return payload
+
     def _content_names(self, owner: str, name: str, path: str) -> list[str]:
         try:
             content = self.get_json(f"/repos/{owner}/{name}/contents/{path}")
@@ -143,16 +157,17 @@ class GitHubClient:
             raise
         if not isinstance(content, list):
             return []
-        return [entry["name"] for entry in content if "name" in entry]
+        return [entry["name"] for entry in content if isinstance(entry, dict) and "name" in entry]
 
     def _latest_maintainer_issue_comments(self, owner: str, name: str) -> dict[int, datetime]:
-        comments = self.get_json(
+        comments = self._get_list(
             f"/repos/{owner}/{name}/issues/comments",
             {
                 "sort": "updated",
                 "direction": "desc",
                 "per_page": "100",
             },
+            "issue comments",
         )
         latest: dict[int, datetime] = {}
         for comment in comments:
@@ -171,6 +186,19 @@ class GitHubClient:
             if current is None or updated_at > current:
                 latest[issue_number] = updated_at
         return latest
+
+    def _search_issue_count(self, owner: str, name: str, item_type: str) -> int:
+        query = f"repo:{owner}/{name} type:{item_type} state:open"
+        payload = self.get_json(
+            "/search/issues",
+            {
+                "q": query,
+                "per_page": "1",
+            },
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
+            raise GitHubError(f"Expected search count for open {item_type}s from /search/issues.")
+        return int(payload["total_count"])
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -214,3 +242,10 @@ def _issue_number_from_url(value: object) -> int | None:
         return int(value.rstrip("/").rsplit("/", 1)[-1])
     except ValueError:
         return None
+
+
+def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
+    labels = issue.get("labels", [])
+    if not isinstance(labels, list):
+        return ()
+    return tuple(label["name"] for label in labels if isinstance(label, dict) and "name" in label)

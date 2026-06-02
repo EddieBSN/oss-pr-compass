@@ -34,6 +34,7 @@ class RepositorySnapshot:
     open_pr_count: int
     labels: tuple[str, ...] = ()
     open_issues: tuple[IssueSnapshot, ...] = ()
+    open_issue_count: int | None = None
 
 
 @dataclass(frozen=True)
