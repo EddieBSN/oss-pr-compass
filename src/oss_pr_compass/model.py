@@ -6,6 +6,17 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class IssueSnapshot:
+    number: int
+    labels: tuple[str, ...]
+    created_at: datetime | None
+    updated_at: datetime | None
+    comment_count: int
+    author_association: str
+    latest_maintainer_comment_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class RepositorySnapshot:
     full_name: str
     html_url: str
@@ -21,6 +32,8 @@ class RepositorySnapshot:
     workflow_entries: frozenset[str]
     merged_prs: tuple[dict[str, Any], ...]
     open_pr_count: int
+    labels: tuple[str, ...] = ()
+    open_issues: tuple[IssueSnapshot, ...] = ()
 
 
 @dataclass(frozen=True)
