@@ -43,18 +43,52 @@ class Signal:
     points: int
     max_points: int
     detail: str
+    confidence: str = "high"
+    sampled: bool = False
+    sample_size: int | None = None
+    sample_total: int | None = None
 
     @property
     def passed(self) -> bool:
         return self.points > 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "name": self.name,
             "passed": self.passed,
             "points": self.points,
             "max_points": self.max_points,
             "detail": self.detail,
+            "confidence": self.confidence,
+        }
+        if self.sampled:
+            data["sampled"] = True
+        if self.sample_size is not None:
+            data["sample_size"] = self.sample_size
+        if self.sample_total is not None:
+            data["sample_total"] = self.sample_total
+        return data
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    id: str
+    signal: str
+    priority: str
+    points_lost: int
+    why_it_matters: str
+    next_action: str
+    evidence: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "signal": self.signal,
+            "priority": self.priority,
+            "points_lost": self.points_lost,
+            "why_it_matters": self.why_it_matters,
+            "next_action": self.next_action,
+            "evidence": list(self.evidence),
         }
 
 
@@ -67,6 +101,7 @@ class Assessment:
     verdict: str
     signals: tuple[Signal, ...]
     recommendations: tuple[str, ...]
+    recommendation_details: tuple[Recommendation, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,4 +112,7 @@ class Assessment:
             "verdict": self.verdict,
             "signals": [signal.to_dict() for signal in self.signals],
             "recommendations": list(self.recommendations),
+            "recommendation_details": [
+                recommendation.to_dict() for recommendation in self.recommendation_details
+            ],
         }

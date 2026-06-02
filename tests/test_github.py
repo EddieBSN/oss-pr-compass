@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.request
+
 import pytest
 
-from oss_pr_compass.github import GitHubClient, GitHubError, parse_repository
+from oss_pr_compass.github import GitHubClient, GitHubError, GitHubResponse, parse_repository
 
 
 @pytest.mark.parametrize(
@@ -76,6 +80,61 @@ def test_fetch_snapshot_tolerates_malformed_issue_labels() -> None:
     assert snapshot.open_issues[0].labels == ()
 
 
+def test_get_paginated_json_follows_next_links() -> None:
+    client = PaginatedGitHubClient()
+
+    items = client.get_paginated_json(
+        "/items",
+        {"per_page": "100"},
+        description="items",
+        max_pages=2,
+    )
+
+    assert items == [{"id": 1}, {"id": 2}]
+    assert client.followed_urls == ["https://api.example.test/items?page=2"]
+
+
+def test_get_paginated_json_rejects_unbounded_pagination() -> None:
+    client = PaginatedGitHubClient()
+
+    with pytest.raises(GitHubError, match="exceeded 1 pages"):
+        client.get_paginated_json(
+            "/items",
+            {"per_page": "100"},
+            description="items",
+            max_pages=1,
+        )
+
+
+def test_get_json_includes_rate_limit_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = urllib.error.HTTPError(
+        "https://api.example.test/rate",
+        429,
+        "Too Many Requests",
+        {
+            "Retry-After": "60",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "1780000000",
+        },
+        io.BytesIO(b'{"message":"rate limited"}'),
+    )
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        raise error
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test")
+
+    with pytest.raises(GitHubError) as exc_info:
+        client.get_json("/rate")
+
+    message = str(exc_info.value)
+    assert "GitHub API returned 429 for /rate" in message
+    assert "Retry-After: 60" in message
+    assert "X-RateLimit-Remaining: 0" in message
+    assert "X-RateLimit-Reset: 1780000000" in message
+
+
 class FakeGitHubClient(GitHubClient):
     def __init__(self, payloads: dict[str, object]):
         super().__init__(api_url="https://api.example.test")
@@ -90,6 +149,25 @@ class FakeGitHubClient(GitHubClient):
                 return {"total_count": 456}
             raise AssertionError(f"unexpected search query: {query}")
         return self.payloads[path]
+
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
+        return GitHubResponse(self.get_json(path, params), {})
+
+
+class PaginatedGitHubClient(GitHubClient):
+    def __init__(self) -> None:
+        super().__init__(api_url="https://api.example.test")
+        self.followed_urls: list[str] = []
+
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
+        return GitHubResponse(
+            [{"id": 1}],
+            {"link": '<https://api.example.test/items?page=2>; rel="next"'},
+        )
+
+    def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
+        self.followed_urls.append(url)
+        return GitHubResponse([{"id": 2}], {})
 
 
 def _base_payloads() -> dict[str, object]:

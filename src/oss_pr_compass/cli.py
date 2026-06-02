@@ -17,6 +17,8 @@ from oss_pr_compass.config import (
 from oss_pr_compass.github import GitHubClient, GitHubError
 from oss_pr_compass.model import Assessment, Signal
 
+VERDICT_RANK = {"needs-work": 0, "promising": 1, "strong": 2}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -49,6 +51,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ignore .oss-pr-compass.json from the target repository.",
     )
     parser.add_argument(
+        "--fail-under",
+        type=float,
+        metavar="SCORE",
+        help="Exit with status 1 when the normalized score is below SCORE from 0 to 100.",
+    )
+    parser.add_argument(
+        "--fail-on-verdict",
+        choices=("strong", "promising", "needs-work"),
+        help="Exit with status 1 when the verdict is this value or lower.",
+    )
+    parser.add_argument(
+        "--warn-only",
+        action="store_true",
+        help="Print policy failures as warnings without changing the exit status.",
+    )
+    parser.add_argument(
         "--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token for higher API limits."
     )
     parser.add_argument("--api-url", default="https://api.github.com", help="GitHub API base URL.")
@@ -61,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.days <= 0:
         parser.error("--days must be greater than zero")
+    if args.fail_under is not None and not 0 <= args.fail_under <= 100:
+        parser.error("--fail-under must be between 0 and 100")
 
     client = GitHubClient(token=args.token, api_url=args.api_url)
     try:
@@ -86,6 +106,17 @@ def main(argv: list[str] | None = None) -> int:
         print(format_markdown(assessment))
     else:
         print(format_assessment(assessment))
+
+    policy_failure = _policy_failure_reason(
+        assessment,
+        fail_under=args.fail_under,
+        fail_on_verdict=args.fail_on_verdict,
+    )
+    if policy_failure:
+        prefix = "warning" if args.warn_only else "error"
+        print(f"{prefix}: oss-pr-compass policy failed: {policy_failure}", file=sys.stderr)
+        if not args.warn_only:
+            return 1
     return 0
 
 
@@ -105,12 +136,24 @@ def format_assessment(assessment: Assessment) -> str:
         else:
             marker = "MISS"
         lines.append(
-            f"- {marker} {signal.name}: {signal.points}/{signal.max_points} - {signal.detail}"
+            f"- {marker} {signal.name}: {signal.points}/{signal.max_points} - "
+            f"{_signal_detail_for_output(signal)}"
         )
 
     if assessment.recommendations:
         lines.extend(["", "Recommendations:"])
         lines.extend(f"- {recommendation}" for recommendation in assessment.recommendations)
+
+    if assessment.recommendation_details:
+        lines.extend(["", "Recommendation details:"])
+        for recommendation in assessment.recommendation_details:
+            evidence = "; ".join(recommendation.evidence)
+            lines.append(
+                f"- [{recommendation.priority.upper()}] {recommendation.signal}: "
+                f"{recommendation.points_lost} points lost. {recommendation.why_it_matters} "
+                f"Next: {recommendation.next_action}"
+                + (f" Evidence: {evidence}" if evidence else "")
+            )
 
     return "\n".join(lines)
 
@@ -136,7 +179,7 @@ def format_markdown(assessment: Assessment) -> str:
             f"{_escape_table_cell(signal.name)} | "
             f"{_signal_marker(signal)} | "
             f"{signal.points}/{signal.max_points} | "
-            f"{_escape_table_cell(signal.detail)} |"
+            f"{_escape_table_cell(_signal_detail_for_output(signal))} |"
         )
 
     if assessment.recommendations:
@@ -145,6 +188,26 @@ def format_markdown(assessment: Assessment) -> str:
             f"- {_escape_markdown_inline(recommendation)}"
             for recommendation in assessment.recommendations
         )
+
+    if assessment.recommendation_details:
+        lines.extend(
+            [
+                "",
+                "### Recommendation Details",
+                "| Priority | Signal | Points Lost | Next Action | Evidence |",
+                "| --- | --- | ---: | --- | --- |",
+            ]
+        )
+        for recommendation in assessment.recommendation_details:
+            evidence = "; ".join(recommendation.evidence)
+            lines.append(
+                "| "
+                f"{_escape_table_cell(recommendation.priority)} | "
+                f"{_escape_table_cell(recommendation.signal)} | "
+                f"{recommendation.points_lost} | "
+                f"{_escape_table_cell(recommendation.next_action)} | "
+                f"{_escape_table_cell(evidence)} |"
+            )
 
     return "\n".join(lines)
 
@@ -187,6 +250,46 @@ def _signal_marker(signal: Signal) -> str:
     if signal.passed:
         return "PART"
     return "MISS"
+
+
+def _signal_detail_for_output(signal: Signal) -> str:
+    if not signal.sampled and signal.confidence == "high":
+        return signal.detail
+
+    details = [signal.detail]
+    if signal.sampled:
+        details.append(f"sampled {signal.sample_size}/{signal.sample_total}")
+    if signal.confidence != "high":
+        details.append(f"confidence: {signal.confidence}")
+    return f"{signal.detail} ({'; '.join(details[1:])})"
+
+
+def _normalized_score(assessment: Assessment) -> float:
+    if assessment.max_score <= 0:
+        return 0.0
+    return assessment.score / assessment.max_score * 100
+
+
+def _policy_failure_reason(
+    assessment: Assessment,
+    *,
+    fail_under: float | None,
+    fail_on_verdict: str | None,
+) -> str | None:
+    reasons = []
+    score = _normalized_score(assessment)
+    if fail_under is not None and score < fail_under:
+        reasons.append(f"score {score:.1f} is below {fail_under:g}")
+
+    if fail_on_verdict is not None:
+        actual_rank = VERDICT_RANK.get(assessment.verdict, -1)
+        threshold_rank = VERDICT_RANK[fail_on_verdict]
+        if actual_rank <= threshold_rank:
+            reasons.append(f"verdict is {assessment.verdict!r}, at or below {fail_on_verdict!r}")
+
+    if not reasons:
+        return None
+    return "; ".join(reasons)
 
 
 def _escape_table_cell(value: str) -> str:

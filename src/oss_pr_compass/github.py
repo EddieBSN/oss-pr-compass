@@ -5,16 +5,28 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from oss_pr_compass.model import IssueSnapshot, RepositorySnapshot
 
 MAINTAINER_ASSOCIATIONS = {"COLLABORATOR", "MEMBER", "OWNER"}
+CLOSED_PULL_REQUEST_PAGE_LIMIT = 5
+ISSUE_COMMENT_PAGE_LIMIT = 3
+OPEN_ISSUE_SAMPLE_PAGE_LIMIT = 3
+REPOSITORY_LABEL_PAGE_LIMIT = 10
 
 
 class GitHubError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GitHubResponse:
+    payload: Any
+    headers: dict[str, str]
 
 
 class GitHubClient:
@@ -42,9 +54,15 @@ class GitHubClient:
                 "per_page": "100",
             },
             "closed pull requests",
+            max_pages=CLOSED_PULL_REQUEST_PAGE_LIMIT,
+            allow_truncated=True,
         )
         labels = self._get_list(
-            f"/repos/{owner}/{name}/labels", {"per_page": "100"}, "repository labels"
+            f"/repos/{owner}/{name}/labels",
+            {"per_page": "100"},
+            "repository labels",
+            max_pages=REPOSITORY_LABEL_PAGE_LIMIT,
+            allow_truncated=True,
         )
         open_issue_items = [
             issue
@@ -57,6 +75,8 @@ class GitHubClient:
                     "per_page": "100",
                 },
                 "open issues",
+                max_pages=OPEN_ISSUE_SAMPLE_PAGE_LIMIT,
+                allow_truncated=True,
             )
             if "pull_request" not in issue
         ]
@@ -119,34 +139,82 @@ class GitHubClient:
             raise GitHubError(f"Could not decode {path} from {repository}: {exc}") from exc
 
     def get_json(self, path: str, params: dict[str, str] | None = None) -> Any:
+        return self.get_json_response(path, params).payload
+
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
         query = f"?{urllib.parse.urlencode(params)}" if params else ""
-        request = urllib.request.Request(
-            f"{self.api_url}{path}{query}",
-            headers=self._headers(),
-        )
+        return self._request_json_url(f"{self.api_url}{path}{query}", path)
+
+    def get_paginated_json(
+        self,
+        path: str,
+        params: dict[str, str] | None = None,
+        *,
+        description: str,
+        max_pages: int,
+        allow_truncated: bool = False,
+    ) -> list[dict[str, Any]]:
+        if max_pages <= 0:
+            raise ValueError("max_pages must be greater than zero")
+
+        items: list[dict[str, Any]] = []
+        response = self.get_json_response(path, params)
+        page = 1
+
+        while True:
+            items.extend(_validate_list_payload(response.payload, path, description))
+
+            next_url = _next_link(response.headers)
+            if next_url is None:
+                return items
+            if page >= max_pages:
+                if allow_truncated:
+                    return items
+                raise GitHubError(
+                    f"GitHub pagination for {description} from {path} exceeded {max_pages} pages."
+                )
+
+            page += 1
+            response = self._request_json_url(next_url, path)
+
+    def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
+        request = urllib.request.Request(url, headers=self._headers())
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = response.read().decode("utf-8")
+                payload = json.loads(body) if body else None
+                return GitHubResponse(payload=payload, headers=_normalize_headers(response.headers))
         except urllib.error.HTTPError as exc:
             message = exc.read().decode("utf-8", errors="replace")
-            raise GitHubError(f"GitHub API returned {exc.code} for {path}: {message}") from exc
+            context = _rate_limit_context(exc.headers)
+            if context:
+                message = f"{message} {context}"
+            raise GitHubError(
+                f"GitHub API returned {exc.code} for {display_path}: {message}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise GitHubError(f"Could not reach GitHub API: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            raise GitHubError(
+                f"GitHub API returned invalid JSON for {display_path}: {exc.msg}"
+            ) from exc
 
     def _get_list(
         self,
         path: str,
         params: dict[str, str] | None,
         description: str,
+        *,
+        max_pages: int = 1,
+        allow_truncated: bool = False,
     ) -> list[dict[str, Any]]:
-        payload = self.get_json(path, params)
-        if not isinstance(payload, list):
-            raise GitHubError(f"Expected a list for {description} from {path}.")
-
-        bad_item = next((item for item in payload if not isinstance(item, dict)), None)
-        if bad_item is not None:
-            raise GitHubError(f"Expected {description} items from {path} to be objects.")
-        return payload
+        return self.get_paginated_json(
+            path,
+            params,
+            description=description,
+            max_pages=max_pages,
+            allow_truncated=allow_truncated,
+        )
 
     def _content_names(self, owner: str, name: str, path: str) -> list[str]:
         try:
@@ -168,6 +236,8 @@ class GitHubClient:
                 "per_page": "100",
             },
             "issue comments",
+            max_pages=ISSUE_COMMENT_PAGE_LIMIT,
+            allow_truncated=True,
         )
         latest: dict[int, datetime] = {}
         for comment in comments:
@@ -249,3 +319,53 @@ def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(labels, list):
         return ()
     return tuple(label["name"] for label in labels if isinstance(label, dict) and "name" in label)
+
+
+def _validate_list_payload(
+    payload: object,
+    path: str,
+    description: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(payload, list):
+        raise GitHubError(f"Expected a list for {description} from {path}.")
+
+    bad_item = next((item for item in payload if not isinstance(item, dict)), None)
+    if bad_item is not None:
+        raise GitHubError(f"Expected {description} items from {path} to be objects.")
+    return payload
+
+
+def _normalize_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    if headers is None:
+        return {}
+    return {key.lower(): value for key, value in headers.items()}
+
+
+def _next_link(headers: Mapping[str, str]) -> str | None:
+    link_header = headers.get("link", "")
+    for part in link_header.split(","):
+        section = part.strip()
+        if 'rel="next"' not in section:
+            continue
+        start = section.find("<")
+        end = section.find(">", start + 1)
+        if start != -1 and end != -1:
+            return section[start + 1 : end]
+    return None
+
+
+def _rate_limit_context(headers: Mapping[str, str] | None) -> str:
+    normalized = _normalize_headers(headers)
+    details = []
+    for header, label in (
+        ("retry-after", "Retry-After"),
+        ("x-ratelimit-remaining", "X-RateLimit-Remaining"),
+        ("x-ratelimit-reset", "X-RateLimit-Reset"),
+    ):
+        value = normalized.get(header)
+        if value:
+            details.append(f"{label}: {value}")
+
+    if not details:
+        return ""
+    return f"Rate limit details: {'; '.join(details)}."

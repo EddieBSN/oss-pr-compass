@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from oss_pr_compass.cli import format_assessment, format_markdown
-from oss_pr_compass.model import Assessment, Signal
+from oss_pr_compass.cli import _policy_failure_reason, format_assessment, format_markdown
+from oss_pr_compass.model import Assessment, Recommendation, Signal
 
 
 def test_format_assessment_includes_signals_and_recommendations() -> None:
@@ -74,3 +74,74 @@ def test_format_markdown_escapes_untrusted_text() -> None:
     assert "\\[click\\]\\(https://evil.example\\)" in output
     assert "&lt;script&gt;\\@team&lt;/script&gt;" in output
     assert "\\[link\\]\\(javascript:alert\\(1\\)\\) - injected" in output
+
+
+def test_format_markdown_includes_sampling_and_recommendation_details() -> None:
+    assessment = Assessment(
+        repository="owner/repo",
+        url="https://github.com/owner/repo",
+        score=88,
+        max_score=100,
+        verdict="strong",
+        signals=(
+            Signal(
+                "Issue triage signals",
+                10,
+                12,
+                "100/100 sampled open issues labeled; 250 total open issues.",
+                confidence="sampled",
+                sampled=True,
+                sample_size=100,
+                sample_total=250,
+            ),
+        ),
+        recommendations=("Keep stale unanswered issues triaged.",),
+        recommendation_details=(
+            Recommendation(
+                id="improve-issue-triage",
+                signal="Issue triage signals",
+                priority="low",
+                points_lost=2,
+                why_it_matters="Issue labels help contributors find scoped work.",
+                next_action="Keep stale unanswered issues triaged.",
+                evidence=("Sampled 100/250 open issues.",),
+            ),
+        ),
+    )
+
+    output = format_markdown(assessment)
+
+    assert "sampled 100/250" in output
+    assert "confidence: sampled" in output
+    assert "### Recommendation Details" in output
+    assert "| low | Issue triage signals | 2 | Keep stale unanswered issues triaged." in output
+
+
+def test_policy_failure_reason_checks_score_and_verdict() -> None:
+    assessment = Assessment(
+        repository="owner/repo",
+        url="https://github.com/owner/repo",
+        score=54,
+        max_score=100,
+        verdict="needs-work",
+        signals=(),
+        recommendations=(),
+    )
+
+    reason = _policy_failure_reason(
+        assessment,
+        fail_under=70,
+        fail_on_verdict="promising",
+    )
+
+    assert reason is not None
+    assert "score 54.0 is below 70" in reason
+    assert "verdict is 'needs-work'" in reason
+    assert (
+        _policy_failure_reason(
+            assessment,
+            fail_under=50,
+            fail_on_verdict=None,
+        )
+        is None
+    )
