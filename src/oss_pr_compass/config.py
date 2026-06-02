@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,10 @@ def parse_score_config(
     base: ScoreConfig | None = None,
 ) -> ScoreConfig:
     try:
-        raw = json.loads(text)
+        raw = json.loads(
+            text,
+            parse_constant=lambda value: _reject_json_constant(value, source),
+        )
     except json.JSONDecodeError as exc:
         raise ScoreConfigError(f"{source} is not valid JSON: {exc.msg}") from exc
     return config_from_mapping(raw, source=source, base=base)
@@ -88,7 +92,9 @@ def config_from_mapping(
 
     disabled_signals = base.disabled_signals
     if "disabled_signals" in raw:
-        disabled_signals = _parse_disabled_signals(raw["disabled_signals"], source)
+        disabled_signals = disabled_signals | _parse_disabled_signals(
+            raw["disabled_signals"], source
+        )
 
     thresholds = base.thresholds
     if "thresholds" in raw:
@@ -209,6 +215,10 @@ def _parse_ratio(value: Any, field_name: str) -> float:
     if not isinstance(value, int | float) or isinstance(value, bool):
         raise ScoreConfigError(f"{field_name} must be a number between 0 and 1.")
     ratio = float(value)
-    if ratio < 0 or ratio > 1:
+    if not math.isfinite(ratio) or ratio < 0 or ratio > 1:
         raise ScoreConfigError(f"{field_name} must be a number between 0 and 1.")
     return ratio
+
+
+def _reject_json_constant(value: str, source: str) -> None:
+    raise ScoreConfigError(f"{source} contains unsupported JSON constant {value}.")

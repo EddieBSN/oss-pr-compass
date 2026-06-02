@@ -83,6 +83,9 @@ Scores are grouped into three verdicts:
 - `promising`: useful signals exist, but check context carefully
 - `needs-work`: missing signals or inactive review flow
 
+Archived repositories always receive a `needs-work` verdict, even when they still have otherwise strong repository
+metadata.
+
 ## Scoring Configuration
 
 Repositories can include `.oss-pr-compass.json` at the repository root to tune thresholds or disable signals that do
