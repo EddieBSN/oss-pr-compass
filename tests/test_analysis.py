@@ -93,6 +93,10 @@ def test_inactive_repository_gets_actionable_recommendations() -> None:
     assert (
         "Review recent closed PRs before investing in a contribution." in assessment.recommendations
     )
+    assert any(
+        recommendation.id == "add-license" and recommendation.evidence
+        for recommendation in assessment.recommendation_details
+    )
 
 
 def test_disabled_signal_reduces_max_score() -> None:
@@ -210,6 +214,10 @@ def test_issue_signal_uses_total_open_issue_count_for_queue_pressure() -> None:
     )
     assert issue_signal.points == 10
     assert "250 total open issues" in issue_signal.detail
+    assert issue_signal.sampled is True
+    assert issue_signal.sample_size == 1
+    assert issue_signal.sample_total == 250
+    assert issue_signal.confidence == "sampled"
 
 
 def test_archived_repository_cannot_receive_strong_verdict() -> None:

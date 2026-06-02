@@ -17,6 +17,7 @@ pass before investing time in a repository.
   recent maintainer responses.
 - Detect repository basics such as license, contribution docs, pull request templates, tests, and CI.
 - Output human-readable text, JSON, or Markdown for automation.
+- Fail or warn in CI when a repository falls below a score or verdict policy.
 - Respect optional repository-local scoring configuration from `.oss-pr-compass.json`.
 
 ## Installation
@@ -38,6 +39,7 @@ oss-pr-compass pypa/pipx
 oss-pr-compass pypa/pipx --json
 oss-pr-compass pypa/pipx --markdown
 oss-pr-compass pypa/pipx --days 30
+oss-pr-compass pypa/pipx --fail-under 75
 ```
 
 Authenticated requests get higher GitHub API limits:
@@ -87,8 +89,26 @@ jobs:
       - name: Score repository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: oss-pr-compass pypa/pipx --github-step-summary
+        run: oss-pr-compass pypa/pipx --fail-on-verdict needs-work --github-step-summary
 ```
+
+## CI Policy Gates
+
+Use policy flags when a workflow should fail on low-readiness repositories:
+
+```bash
+oss-pr-compass pypa/pipx --fail-under 75
+oss-pr-compass pypa/pipx --fail-on-verdict needs-work
+oss-pr-compass pypa/pipx --fail-under 75 --warn-only
+```
+
+`--fail-under` checks the normalized score from 0 to 100. `--fail-on-verdict` fails when the verdict is the selected
+value or lower, so `needs-work` fails only `needs-work`, while `promising` fails both `promising` and `needs-work`.
+`--warn-only` prints the same policy failure to stderr without changing the exit status.
+
+JSON output includes both `recommendations` and `recommendation_details`. The detailed form includes priority, points
+lost, why the signal matters, the next action, and evidence from the underlying signal. Signals may also include
+`confidence`, `sampled`, `sample_size`, and `sample_total` when a large repository requires sampled issue triage.
 
 ## Scoring
 
@@ -114,9 +134,10 @@ Scores are grouped into three verdicts:
 Archived repositories always receive a `needs-work` verdict, even when they still have otherwise strong repository
 metadata.
 
-Current GitHub API collection uses GitHub Search for open PR and issue queue counts, while issue triage quality still
-samples up to 100 recently updated open issues, labels, and recent issue comments. Treat issue-triage details for very
-large repositories as first-pass signals until pagination-aware triage lands.
+GitHub API collection follows Link-header pagination with endpoint-specific caps to avoid unbounded workflow runtime.
+Open PR and issue queue counts come from GitHub Search totals. Issue triage quality samples recently updated open
+issues and comments; large repositories are marked with sampled confidence metadata when the total issue count exceeds
+the inspected sample.
 
 ## Scoring Configuration
 
@@ -176,6 +197,7 @@ Supported threshold keys:
 - Invalid repository: use `owner/name` or `https://github.com/owner/name`, not issue, pull request, tree, or blob URLs.
 - Rate limits: set `GITHUB_TOKEN` or pass `--token` for higher GitHub API limits.
 - Missing step summary: `--github-step-summary` needs a path when `GITHUB_STEP_SUMMARY` is not set.
+- Policy failure: use `--warn-only` while tuning thresholds before enforcing `--fail-under` or `--fail-on-verdict`.
 - Invalid config: `.oss-pr-compass.json` must be strict JSON with only supported keys.
 - Unknown thresholds or signals: check the tables above for accepted names.
 - GitHub 404s: confirm the repository is public and the API token can read it.

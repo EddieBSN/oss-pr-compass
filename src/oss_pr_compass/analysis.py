@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from oss_pr_compass.config import ScoreConfig
-from oss_pr_compass.model import Assessment, IssueSnapshot, RepositorySnapshot, Signal
+from oss_pr_compass.model import (
+    Assessment,
+    IssueSnapshot,
+    Recommendation,
+    RepositorySnapshot,
+    Signal,
+)
 
 SIGNAL_WEIGHTS = {
     "OSS license": 12,
@@ -65,7 +71,8 @@ def assess_repository(
     )
     score = sum(signal.points for signal in signals)
     max_score = sum(signal.max_points for signal in signals)
-    recommendations = _recommendations(signals)
+    recommendation_details = tuple(_recommendation_details(signals))
+    recommendations = tuple(recommendation.next_action for recommendation in recommendation_details)
 
     return Assessment(
         repository=snapshot.full_name,
@@ -74,7 +81,8 @@ def assess_repository(
         max_score=max_score,
         verdict=_verdict(score, max_score, archived=snapshot.archived),
         signals=signals,
-        recommendations=tuple(recommendations),
+        recommendations=recommendations,
+        recommendation_details=recommendation_details,
     )
 
 
@@ -290,45 +298,190 @@ def _issue_triage_signal(
         f"{len(stale_unanswered)} stale unanswered in sample; "
         f"{len(recent_maintainer_responses)} recent maintainer responses."
     )
-    return Signal("Issue triage signals", points, max_points, detail)
+    sampled = snapshot.open_issue_count is not None and total_issue_count > sampled_issue_count
+    return Signal(
+        "Issue triage signals",
+        points,
+        max_points,
+        detail,
+        confidence="sampled" if sampled else "high",
+        sampled=sampled,
+        sample_size=sampled_issue_count if sampled else None,
+        sample_total=total_issue_count if sampled else None,
+    )
 
 
 def _recommendations(signals: tuple[Signal, ...]) -> list[str]:
-    recommendations = []
+    return [recommendation.next_action for recommendation in _recommendation_details(signals)]
+
+
+def _recommendation_details(signals: tuple[Signal, ...]) -> list[Recommendation]:
+    recommendations: list[Recommendation] = []
     for signal in signals:
         if signal.points == signal.max_points:
             continue
+        points_lost = signal.max_points - signal.points
+        priority = _recommendation_priority(points_lost)
+        evidence = _recommendation_evidence(signal)
         if signal.name == "OSS license":
-            recommendations.append("Add a standard open source license file.")
+            recommendations.append(
+                Recommendation(
+                    id="add-license",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "A clear license tells outside contributors whether the code can be "
+                        "used, changed, and redistributed."
+                    ),
+                    next_action="Add a standard open source license file.",
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Recent repository activity":
-            recommendations.append("Check whether the repository is still actively maintained.")
+            recommendations.append(
+                Recommendation(
+                    id="check-maintenance",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "Recent repository activity is a basic signal that maintainers may still "
+                        "review incoming work."
+                    ),
+                    next_action="Check whether the repository is still actively maintained.",
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Merged pull request activity":
             if signal.points == 0:
-                recommendations.append(
-                    "Review recent closed PRs before investing in a contribution."
+                next_action = "Review recent closed PRs before investing in a contribution."
+            else:
+                next_action = (
+                    "Check whether recent PRs show timely review and merges before investing "
+                    "in a larger contribution."
                 )
+            recommendations.append(
+                Recommendation(
+                    id="review-pr-activity",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "Merged pull requests show whether outside contributions are making it "
+                        "through review."
+                    ),
+                    next_action=next_action,
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Contribution documentation":
             if signal.points == 9:
-                recommendations.append(
-                    "Add a code of conduct if the project does not inherit one elsewhere."
-                )
+                next_action = "Add a code of conduct if the project does not inherit one elsewhere."
+                recommendation_id = "add-code-of-conduct"
             elif signal.points == 5:
-                recommendations.append("Add a contribution guide for outside contributors.")
+                next_action = "Add a contribution guide for outside contributors."
+                recommendation_id = "add-contributing"
             else:
-                recommendations.append("Add CONTRIBUTING and CODE_OF_CONDUCT documentation.")
+                next_action = "Add CONTRIBUTING and CODE_OF_CONDUCT documentation."
+                recommendation_id = "add-contributor-docs"
+            recommendations.append(
+                Recommendation(
+                    id=recommendation_id,
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "Contributor documentation reduces guesswork for first-time pull "
+                        "requests and moderation expectations."
+                    ),
+                    next_action=next_action,
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Pull request template":
             recommendations.append(
-                "Add a pull request template that asks for summary, tests, and issue links."
+                Recommendation(
+                    id="add-pr-template",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "A pull request template nudges contributors to include review-ready "
+                        "context."
+                    ),
+                    next_action=(
+                        "Add a pull request template that asks for summary, tests, and issue links."
+                    ),
+                    evidence=evidence,
+                )
             )
         elif signal.name == "CI and test signals":
-            recommendations.append("Add visible CI and tests so contributors can validate changes.")
+            recommendations.append(
+                Recommendation(
+                    id="add-ci-tests",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "Visible validation gives contributors fast feedback before maintainers "
+                        "spend review time."
+                    ),
+                    next_action="Add visible CI and tests so contributors can validate changes.",
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Open pull request queue":
-            recommendations.append("Reduce open PR backlog or document review expectations.")
+            recommendations.append(
+                Recommendation(
+                    id="reduce-pr-backlog",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "A large open PR queue can indicate slow review, unclear ownership, or "
+                        "stalled contribution flow."
+                    ),
+                    next_action="Reduce open PR backlog or document review expectations.",
+                    evidence=evidence,
+                )
+            )
         elif signal.name == "Issue triage signals":
             recommendations.append(
-                "Add contributor-friendly issue labels and keep stale unanswered issues triaged."
+                Recommendation(
+                    id="improve-issue-triage",
+                    signal=signal.name,
+                    priority=priority,
+                    points_lost=points_lost,
+                    why_it_matters=(
+                        "Issue labels and maintainer responses help contributors find scoped "
+                        "work and avoid stale threads."
+                    ),
+                    next_action=(
+                        "Review issue triage gaps in labels, stale unanswered issues, and "
+                        "recent maintainer responses."
+                    ),
+                    evidence=evidence,
+                )
             )
     return recommendations
+
+
+def _recommendation_priority(points_lost: int) -> str:
+    if points_lost >= 12:
+        return "high"
+    if points_lost >= 5:
+        return "medium"
+    return "low"
+
+
+def _recommendation_evidence(signal: Signal) -> tuple[str, ...]:
+    evidence = [signal.detail]
+    if signal.sampled:
+        evidence.append(f"Sampled {signal.sample_size}/{signal.sample_total} open issues.")
+    if signal.confidence != "high":
+        evidence.append(f"Confidence: {signal.confidence}.")
+    return tuple(evidence)
 
 
 def _verdict(score: int, max_score: int, *, archived: bool = False) -> str:
