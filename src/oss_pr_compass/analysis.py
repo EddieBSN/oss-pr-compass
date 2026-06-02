@@ -202,7 +202,7 @@ def _open_pr_queue_signal(
         points = _scaled_points(max_points, 0.40)
     else:
         points = 0
-    return Signal("Open pull request queue", points, max_points, f"{count} open PRs sampled.")
+    return Signal("Open pull request queue", points, max_points, f"{count} open PRs.")
 
 
 def _issue_triage_signal(
@@ -213,12 +213,15 @@ def _issue_triage_signal(
     max_points = SIGNAL_WEIGHTS["Issue triage signals"]
     thresholds = config.thresholds
     issues = snapshot.open_issues
-    issue_count = len(issues)
+    sampled_issue_count = len(issues)
+    total_issue_count = (
+        snapshot.open_issue_count if snapshot.open_issue_count is not None else sampled_issue_count
+    )
     contributor_labels = _contributor_labels(snapshot)
     contributor_label_points = 3 if contributor_labels else 0
 
     labeled_issue_count = sum(1 for issue in issues if issue.labels)
-    label_ratio = labeled_issue_count / issue_count if issue_count else 1.0
+    label_ratio = labeled_issue_count / sampled_issue_count if sampled_issue_count else 1.0
     if label_ratio >= thresholds.issue_label_ratio_full:
         label_points = 3
     elif label_ratio >= thresholds.issue_label_ratio_partial:
@@ -228,9 +231,9 @@ def _issue_triage_signal(
     else:
         label_points = 0
 
-    if issue_count <= thresholds.open_issue_queue_full:
+    if total_issue_count <= thresholds.open_issue_queue_full:
         issue_queue_points = 2
-    elif issue_count <= thresholds.open_issue_queue_partial:
+    elif total_issue_count <= thresholds.open_issue_queue_partial:
         issue_queue_points = 1
     else:
         issue_queue_points = 0
@@ -239,11 +242,11 @@ def _issue_triage_signal(
     stale_unanswered = [
         issue for issue in issues if _is_stale_unanswered_external_issue(issue, stale_cutoff)
     ]
-    if issue_count == 0 or not stale_unanswered:
+    if sampled_issue_count == 0 or not stale_unanswered:
         stale_points = 2
     elif (
         len(stale_unanswered) <= thresholds.stale_unanswered_minimum
-        or len(stale_unanswered) / issue_count <= thresholds.stale_unanswered_partial_ratio
+        or len(stale_unanswered) / sampled_issue_count <= thresholds.stale_unanswered_partial_ratio
     ):
         stale_points = 1
     else:
@@ -256,7 +259,9 @@ def _issue_triage_signal(
         if issue.latest_maintainer_comment_at is not None
         and issue.latest_maintainer_comment_at >= response_cutoff
     ]
-    response_ratio = len(recent_maintainer_responses) / issue_count if issue_count else 1.0
+    response_ratio = (
+        len(recent_maintainer_responses) / sampled_issue_count if sampled_issue_count else 1.0
+    )
     if response_ratio >= thresholds.maintainer_response_full_ratio:
         response_points = 2
     elif (
@@ -280,8 +285,9 @@ def _issue_triage_signal(
         else "no contributor-friendly labels"
     )
     detail = (
-        f"{label_detail}; {labeled_issue_count}/{issue_count} open issues labeled; "
-        f"{issue_count} open issues sampled; {len(stale_unanswered)} stale unanswered; "
+        f"{label_detail}; {labeled_issue_count}/{sampled_issue_count} sampled open issues "
+        f"labeled; {total_issue_count} total open issues; "
+        f"{len(stale_unanswered)} stale unanswered in sample; "
         f"{len(recent_maintainer_responses)} recent maintainer responses."
     )
     return Signal("Issue triage signals", points, max_points, detail)
@@ -372,9 +378,11 @@ def _is_contributor_friendly_label(label: str) -> bool:
 
 
 def _is_stale_unanswered_external_issue(issue: IssueSnapshot, cutoff: datetime) -> bool:
-    if issue.comment_count > 0 or issue.created_at is None:
+    if issue.created_at is None:
         return False
     if issue.author_association.upper() in MAINTAINER_ASSOCIATIONS:
+        return False
+    if issue.latest_maintainer_comment_at is not None:
         return False
     return issue.created_at <= cutoff
 

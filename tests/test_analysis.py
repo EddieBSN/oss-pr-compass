@@ -149,7 +149,7 @@ def test_issue_signal_flags_stale_unanswered_issues() -> None:
                 labels=(),
                 created_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
                 updated_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
-                comment_count=0,
+                comment_count=3,
                 author_association="CONTRIBUTOR",
             ),
         ),
@@ -166,6 +166,50 @@ def test_issue_signal_flags_stale_unanswered_issues() -> None:
     )
     assert issue_signal.points < issue_signal.max_points
     assert "1 stale unanswered" in issue_signal.detail
+
+
+def test_issue_signal_uses_total_open_issue_count_for_queue_pressure() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/many-issues",
+        html_url="https://github.com/example/many-issues",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=1,
+                labels=("good first issue",),
+                created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="CONTRIBUTOR",
+                latest_maintainer_comment_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            ),
+        ),
+        open_issue_count=250,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = next(
+        signal for signal in assessment.signals if signal.name == "Issue triage signals"
+    )
+    assert issue_signal.points == 10
+    assert "250 total open issues" in issue_signal.detail
 
 
 def test_archived_repository_cannot_receive_strong_verdict() -> None:

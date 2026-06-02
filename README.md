@@ -102,7 +102,7 @@ The score is intentionally simple and inspectable:
 | Contribution documentation | 14 | `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are present. | 9 points for contributing docs, 5 points for code of conduct. |
 | Pull request template | 8 | A root or `.github` pull request template is present. | None. |
 | CI and test signals | 14 | CI workflows and a `tests` or `test` directory are present. | 7 points for CI, 7 points for tests. |
-| Open pull request queue | 8 | 10 or fewer open PRs are sampled. | 6 points for 50 or fewer, or 3 points for 100 or fewer. |
+| Open pull request queue | 8 | 10 or fewer open PRs. | 6 points for 50 or fewer, or 3 points for 100 or fewer. |
 | Issue triage signals | 12 | Contributor labels, labeled open issues, manageable issue count, few stale unanswered issues, and recent maintainer responses are all present. | Subscores are contributor labels 3, labeled issues 3, issue queue 2, stale unanswered issues 2, maintainer responses 2. |
 
 Scores are grouped into three verdicts:
@@ -114,8 +114,9 @@ Scores are grouped into three verdicts:
 Archived repositories always receive a `needs-work` verdict, even when they still have otherwise strong repository
 metadata.
 
-Current GitHub API collection samples up to 100 open PRs, open issues, labels, and recent issue comments. Treat scores
-for very large repositories as a first-pass signal until pagination-aware queue counting lands.
+Current GitHub API collection uses GitHub Search for open PR and issue queue counts, while issue triage quality still
+samples up to 100 recently updated open issues, labels, and recent issue comments. Treat issue-triage details for very
+large repositories as first-pass signals until pagination-aware triage lands.
 
 ## Scoring Configuration
 
