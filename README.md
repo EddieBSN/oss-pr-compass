@@ -64,18 +64,46 @@ You can also write the same Markdown to an explicit file:
 oss-pr-compass pypa/pipx --github-step-summary compass-summary.md
 ```
 
+Example workflow step:
+
+```yaml
+name: Repository readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install oss-pr-compass
+        run: python -m pip install oss-pr-compass
+      - name: Score repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: oss-pr-compass pypa/pipx --github-step-summary
+```
+
 ## Scoring
 
 The score is intentionally simple and inspectable:
 
-- OSS license
-- Recent repository activity
-- Merged pull request activity
-- Contribution documentation
-- Pull request template
-- CI and test signals
-- Manageable open pull request queue
-- Issue triage signals
+| Signal | Max points | Full credit | Partial credit |
+| --- | ---: | --- | --- |
+| OSS license | 12 | GitHub reports license metadata. | None. |
+| Recent repository activity | 14 | Repository is not archived and was pushed within 45 days. | 8 points when pushed within 90 days. |
+| Merged pull request activity | 18 | At least 20 merged PRs in the lookback window. | 14 points for at least 5, or 7 points for at least 1. |
+| Contribution documentation | 14 | `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are present. | 9 points for contributing docs, 5 points for code of conduct. |
+| Pull request template | 8 | A root or `.github` pull request template is present. | None. |
+| CI and test signals | 14 | CI workflows and a `tests` or `test` directory are present. | 7 points for CI, 7 points for tests. |
+| Open pull request queue | 8 | 10 or fewer open PRs are sampled. | 6 points for 50 or fewer, or 3 points for 100 or fewer. |
+| Issue triage signals | 12 | Contributor labels, labeled open issues, manageable issue count, few stale unanswered issues, and recent maintainer responses are all present. | Subscores are contributor labels 3, labeled issues 3, issue queue 2, stale unanswered issues 2, maintainer responses 2. |
 
 Scores are grouped into three verdicts:
 
@@ -85,6 +113,9 @@ Scores are grouped into three verdicts:
 
 Archived repositories always receive a `needs-work` verdict, even when they still have otherwise strong repository
 metadata.
+
+Current GitHub API collection samples up to 100 open PRs, open issues, labels, and recent issue comments. Treat scores
+for very large repositories as a first-pass signal until pagination-aware queue counting lands.
 
 ## Scoring Configuration
 
@@ -113,9 +144,45 @@ Example:
 
 Unknown keys are rejected so configuration mistakes are visible in CI.
 
+Accepted `disabled_signals` values are the signal names from the scoring table. The parser also accepts lowercase,
+dash-separated, or underscore-separated aliases such as `pull_request_template`.
+
+Supported threshold keys:
+
+| Key | Default | Type | Validation |
+| --- | ---: | --- | --- |
+| `recent_activity_full_days` | 45 | integer | positive, must be <= `recent_activity_partial_days` |
+| `recent_activity_partial_days` | 90 | integer | positive |
+| `merged_prs_full` | 20 | integer | positive, must be >= `merged_prs_partial` |
+| `merged_prs_partial` | 5 | integer | positive, must be >= `merged_prs_minimum` |
+| `merged_prs_minimum` | 1 | integer | positive |
+| `open_pr_queue_full` | 10 | integer | positive, must be <= `open_pr_queue_partial` |
+| `open_pr_queue_partial` | 50 | integer | positive, must be <= `open_pr_queue_minimum` |
+| `open_pr_queue_minimum` | 100 | integer | positive |
+| `open_issue_queue_full` | 50 | integer | positive, must be <= `open_issue_queue_partial` |
+| `open_issue_queue_partial` | 100 | integer | positive |
+| `issue_label_ratio_full` | 0.75 | number | between 0 and 1, must be >= `issue_label_ratio_partial` |
+| `issue_label_ratio_partial` | 0.50 | number | between 0 and 1 |
+| `stale_unanswered_days` | 30 | integer | positive |
+| `stale_unanswered_partial_ratio` | 0.10 | number | between 0 and 1 |
+| `stale_unanswered_minimum` | 2 | integer | non-negative |
+| `maintainer_response_window_days` | 30 | integer | positive |
+| `maintainer_response_full_ratio` | 0.25 | number | between 0 and 1, must be >= `maintainer_response_partial_ratio` |
+| `maintainer_response_partial_ratio` | 0.10 | number | between 0 and 1 |
+
+## Troubleshooting
+
+- Invalid repository: use `owner/name` or `https://github.com/owner/name`, not issue, pull request, tree, or blob URLs.
+- Rate limits: set `GITHUB_TOKEN` or pass `--token` for higher GitHub API limits.
+- Missing step summary: `--github-step-summary` needs a path when `GITHUB_STEP_SUMMARY` is not set.
+- Invalid config: `.oss-pr-compass.json` must be strict JSON with only supported keys.
+- Unknown thresholds or signals: check the tables above for accepted names.
+- GitHub 404s: confirm the repository is public and the API token can read it.
+
 ## Project Status
 
 This project is new. The first release focuses on repository-level signals that are available from public GitHub APIs.
+See [MAINTAINERS.md](MAINTAINERS.md) for maintainer workflow and release expectations.
 
 ## Contributing
 
