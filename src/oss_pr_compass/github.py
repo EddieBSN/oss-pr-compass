@@ -184,9 +184,17 @@ class GitHubClient:
 
 
 def parse_repository(value: str) -> tuple[str, str]:
-    cleaned = value.removeprefix("https://github.com/").strip("/")
+    cleaned = value.strip()
+    if cleaned.startswith("https://github.com/"):
+        cleaned = cleaned.removeprefix("https://github.com/")
+    elif "://" in cleaned or cleaned.startswith("git@"):
+        raise ValueError(
+            "repository must look like 'owner/name' or 'https://github.com/owner/name'"
+        )
+
+    cleaned = cleaned.strip("/")
     parts = cleaned.split("/")
-    if len(parts) < 2 or not parts[0] or not parts[1]:
+    if len(parts) != 2 or not parts[0] or not parts[1]:
         raise ValueError(
             "repository must look like 'owner/name' or 'https://github.com/owner/name'"
         )

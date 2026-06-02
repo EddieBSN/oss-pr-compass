@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 
 from oss_pr_compass.analysis import assess_repository
@@ -115,10 +116,14 @@ def format_assessment(assessment: Assessment) -> str:
 
 
 def format_markdown(assessment: Assessment) -> str:
+    repository = _escape_markdown_inline(assessment.repository)
+    repository_url = _safe_markdown_link_target(assessment.url)
     lines = [
-        f"## oss-pr-compass: `{assessment.repository}`",
+        f"## oss-pr-compass: {repository}",
         "",
-        f"[Repository]({assessment.url})",
+        f"[Repository]({repository_url})"
+        if repository_url
+        else f"Repository: {_escape_markdown_inline(assessment.url)}",
         "",
         f"**Score:** {assessment.score}/{assessment.max_score} (`{assessment.verdict}`)",
         "",
@@ -137,7 +142,7 @@ def format_markdown(assessment: Assessment) -> str:
     if assessment.recommendations:
         lines.extend(["", "### Recommendations"])
         lines.extend(
-            f"- {_escape_markdown_text(recommendation)}"
+            f"- {_escape_markdown_inline(recommendation)}"
             for recommendation in assessment.recommendations
         )
 
@@ -189,7 +194,26 @@ def _escape_table_cell(value: str) -> str:
 
 
 def _escape_markdown_text(value: str) -> str:
-    return value.replace("\\", "\\\\")
+    escaped = (
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\\", "\\\\")
+    )
+    for char in ("`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "@"):
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _escape_markdown_inline(value: str) -> str:
+    return " ".join(_escape_markdown_text(value).splitlines())
+
+
+def _safe_markdown_link_target(value: str) -> str:
+    stripped = value.strip()
+    parsed = urllib.parse.urlparse(stripped)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    if any(char in stripped for char in "\r\n<>"):
+        return ""
+    return urllib.parse.quote(stripped, safe=":/?#@!$&'*,;=%")
 
 
 if __name__ == "__main__":

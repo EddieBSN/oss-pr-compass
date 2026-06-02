@@ -72,7 +72,7 @@ def assess_repository(
         url=snapshot.html_url,
         score=score,
         max_score=max_score,
-        verdict=_verdict(score, max_score),
+        verdict=_verdict(score, max_score, archived=snapshot.archived),
         signals=signals,
         recommendations=tuple(recommendations),
     )
@@ -325,7 +325,10 @@ def _recommendations(signals: tuple[Signal, ...]) -> list[str]:
     return recommendations
 
 
-def _verdict(score: int, max_score: int) -> str:
+def _verdict(score: int, max_score: int, *, archived: bool = False) -> str:
+    if archived:
+        return "needs-work"
+
     percent = (score / max_score * 100) if max_score else 0
     if percent >= 75:
         return "strong"

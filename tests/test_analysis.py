@@ -166,3 +166,40 @@ def test_issue_signal_flags_stale_unanswered_issues() -> None:
     )
     assert issue_signal.points < issue_signal.max_points
     assert "1 stale unanswered" in issue_signal.detail
+
+
+def test_archived_repository_cannot_receive_strong_verdict() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/archived",
+        html_url="https://github.com/example/archived",
+        description="Archived",
+        stars=5000,
+        forks=300,
+        archived=True,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset(
+            {
+                "LICENSE",
+                "CONTRIBUTING.md",
+                "CODE_OF_CONDUCT.md",
+                ".github/PULL_REQUEST_TEMPLATE.md",
+                "tests",
+            }
+        ),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    assert assessment.score >= 75
+    assert assessment.verdict == "needs-work"
