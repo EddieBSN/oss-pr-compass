@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from oss_pr_compass.cli import _policy_failure_reason, format_assessment, format_markdown, main
+from oss_pr_compass.github import GitHubError
 from oss_pr_compass.model import Assessment, Recommendation, Signal
 
 
@@ -147,8 +148,24 @@ def test_policy_failure_reason_checks_score_and_verdict() -> None:
     )
 
 
-def test_main_reports_unsafe_api_url(capsys: object) -> None:
+def test_main_reports_unsafe_api_url(capsys) -> None:
     assert main(["owner/repo", "--api-url", "http://api.example.test"]) == 2
 
     captured = capsys.readouterr()
     assert "error: --api-url must be an absolute HTTPS URL." in captured.err
+
+
+def test_main_reports_github_timeout(monkeypatch, capsys) -> None:
+    class TimeoutClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str) -> object:
+            raise GitHubError("GitHub API timed out for /repos/owner/repo: timed out")
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", TimeoutClient)
+
+    assert main(["owner/repo"]) == 2
+
+    captured = capsys.readouterr()
+    assert "error: GitHub API timed out for /repos/owner/repo: timed out" in captured.err
