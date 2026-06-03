@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -13,10 +14,15 @@ from typing import Any
 from oss_pr_compass.model import IssueSnapshot, RepositorySnapshot
 
 MAINTAINER_ASSOCIATIONS = {"COLLABORATOR", "MEMBER", "OWNER"}
+API_REQUEST_ATTEMPTS = 3
+BASE_RETRY_DELAY_SECONDS = 0.25
 CLOSED_PULL_REQUEST_PAGE_LIMIT = 5
 ISSUE_COMMENT_PAGE_LIMIT = 3
+MAX_RETRY_AFTER_SECONDS = 5.0
 OPEN_ISSUE_SAMPLE_PAGE_LIMIT = 3
 REPOSITORY_LABEL_PAGE_LIMIT = 10
+RETRY_AFTER_HTTP_STATUS_CODES = {403, 429}
+TRANSIENT_HTTP_STATUS_CODES = {502, 503, 504}
 
 
 class GitHubError(RuntimeError):
@@ -30,9 +36,16 @@ class GitHubResponse:
 
 
 class GitHubClient:
-    def __init__(self, *, token: str | None = None, api_url: str = "https://api.github.com"):
+    def __init__(
+        self,
+        *,
+        token: str | None = None,
+        api_url: str = "https://api.github.com",
+        sleep: Callable[[float], None] | None = None,
+    ):
         self.token = token
         self.api_url, self._api_origin = _normalize_api_url(api_url)
+        self._sleep = sleep or time.sleep
 
     def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
@@ -182,28 +195,40 @@ class GitHubClient:
             response = self._request_json_url(next_url, path)
 
     def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
-        request = urllib.request.Request(url, headers=self._headers())
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = response.read().decode("utf-8")
-                payload = json.loads(body) if body else None
-                return GitHubResponse(payload=payload, headers=_normalize_headers(response.headers))
-        except urllib.error.HTTPError as exc:
-            message = exc.read().decode("utf-8", errors="replace")
-            context = _rate_limit_context(exc.headers)
-            if context:
-                message = f"{message} {context}"
-            raise GitHubError(
-                f"GitHub API returned {exc.code} for {display_path}: {message}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise GitHubError(f"Could not reach GitHub API: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise GitHubError(f"GitHub API timed out for {display_path}: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise GitHubError(
-                f"GitHub API returned invalid JSON for {display_path}: {exc.msg}"
-            ) from exc
+        for attempt in range(API_REQUEST_ATTEMPTS):
+            request = urllib.request.Request(url, headers=self._headers())
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    body = response.read().decode("utf-8")
+                    payload = json.loads(body) if body else None
+                    return GitHubResponse(payload=payload, headers=_normalize_headers(response.headers))
+            except urllib.error.HTTPError as exc:
+                retry_after = _retry_after_seconds(exc.headers)
+                error = _github_http_error(exc, display_path)
+                if (
+                    _should_retry_http_error(exc.code, retry_after)
+                    and attempt < API_REQUEST_ATTEMPTS - 1
+                ):
+                    self._sleep(_retry_delay_seconds(attempt, retry_after))
+                    continue
+                raise error from exc
+            except urllib.error.URLError as exc:
+                error = GitHubError(f"Could not reach GitHub API: {exc.reason}")
+                if attempt < API_REQUEST_ATTEMPTS - 1:
+                    self._sleep(_retry_delay_seconds(attempt, None))
+                    continue
+                raise error from exc
+            except TimeoutError as exc:
+                error = GitHubError(f"GitHub API timed out for {display_path}: {exc}")
+                if attempt < API_REQUEST_ATTEMPTS - 1:
+                    self._sleep(_retry_delay_seconds(attempt, None))
+                    continue
+                raise error from exc
+            except json.JSONDecodeError as exc:
+                raise GitHubError(
+                    f"GitHub API returned invalid JSON for {display_path}: {exc.msg}"
+                ) from exc
+        raise GitHubError(f"GitHub API request failed for {display_path}.")
 
     def _get_list(
         self,
@@ -378,6 +403,39 @@ def _normalize_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     if headers is None:
         return {}
     return {key.lower(): value for key, value in headers.items()}
+
+
+def _should_retry_http_error(code: int, retry_after: float | None) -> bool:
+    if code in TRANSIENT_HTTP_STATUS_CODES:
+        return True
+    return code in RETRY_AFTER_HTTP_STATUS_CODES and retry_after is not None
+
+
+def _retry_after_seconds(headers: Mapping[str, str] | None) -> float | None:
+    value = _normalize_headers(headers).get("retry-after")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    if not 0 <= seconds <= MAX_RETRY_AFTER_SECONDS:
+        return None
+    return seconds
+
+
+def _retry_delay_seconds(attempt: int, retry_after: float | None) -> float:
+    if retry_after is not None:
+        return retry_after
+    return min(BASE_RETRY_DELAY_SECONDS * (2**attempt), MAX_RETRY_AFTER_SECONDS)
+
+
+def _github_http_error(exc: urllib.error.HTTPError, display_path: str) -> GitHubError:
+    message = exc.read().decode("utf-8", errors="replace")
+    context = _rate_limit_context(exc.headers)
+    if context:
+        message = f"{message} {context}"
+    return GitHubError(f"GitHub API returned {exc.code} for {display_path}: {message}")
 
 
 def _next_link(headers: Mapping[str, str]) -> str | None:
