@@ -191,7 +191,7 @@ def test_get_json_wraps_connection_timeout(monkeypatch: pytest.MonkeyPatch) -> N
         raise TimeoutError("timed out")
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    client = GitHubClient(api_url="https://api.example.test")
+    client = GitHubClient(api_url="https://api.example.test", sleep=lambda _: None)
 
     with pytest.raises(GitHubError) as exc_info:
         client.get_json("/timeout")
@@ -206,7 +206,7 @@ def test_get_json_wraps_response_read_timeout(monkeypatch: pytest.MonkeyPatch) -
         return TimeoutResponse()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    client = GitHubClient(api_url="https://api.example.test")
+    client = GitHubClient(api_url="https://api.example.test", sleep=lambda _: None)
 
     with pytest.raises(GitHubError) as exc_info:
         client.get_json("/slow-body")
@@ -214,6 +214,89 @@ def test_get_json_wraps_response_read_timeout(monkeypatch: pytest.MonkeyPatch) -
     message = str(exc_info.value)
     assert "GitHub API timed out for /slow-body" in message
     assert "read timed out" in message
+
+
+def test_get_json_retries_transient_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses: list[object] = [_http_error(503), JsonResponse(b'{"ok": true}')]
+    sleeps: list[float] = []
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        nonlocal calls
+        calls += 1
+        response = responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test", sleep=sleeps.append)
+
+    assert client.get_json("/retry") == {"ok": True}
+    assert calls == 2
+    assert sleeps == [0.25]
+
+
+def test_get_json_honors_short_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses: list[object] = [
+        _http_error(429, headers={"Retry-After": "1"}),
+        JsonResponse(b'{"ok": true}'),
+    ]
+    sleeps: list[float] = []
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        nonlocal calls
+        calls += 1
+        response = responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test", sleep=sleeps.append)
+
+    assert client.get_json("/retry") == {"ok": True}
+    assert calls == 2
+    assert sleeps == [1.0]
+
+
+def test_get_json_does_not_retry_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        nonlocal calls
+        calls += 1
+        raise _http_error(404)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test", sleep=sleeps.append)
+
+    with pytest.raises(GitHubError, match="returned 404"):
+        client.get_json("/missing")
+
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_get_json_raises_after_retry_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        nonlocal calls
+        calls += 1
+        raise _http_error(502)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test", sleep=sleeps.append)
+
+    with pytest.raises(GitHubError, match="returned 502"):
+        client.get_json("/retry")
+
+    assert calls == 3
+    assert sleeps == [0.25, 0.5]
 
 
 class TimeoutResponse:
@@ -227,6 +310,36 @@ class TimeoutResponse:
 
     def read(self) -> bytes:
         raise TimeoutError("read timed out")
+
+
+class JsonResponse:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.headers: dict[str, str] = {}
+
+    def __enter__(self) -> JsonResponse:
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.payload
+
+
+def _http_error(
+    status: int,
+    *,
+    headers: dict[str, str] | None = None,
+    body: bytes = b'{"message":"temporary"}',
+) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "https://api.example.test/retry",
+        status,
+        "Error",
+        headers or {},
+        io.BytesIO(body),
+    )
 
 
 class FakeGitHubClient(GitHubClient):
