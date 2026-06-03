@@ -82,8 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.fail_under is not None and not 0 <= args.fail_under <= 100:
         parser.error("--fail-under must be between 0 and 100")
 
-    client = GitHubClient(token=args.token, api_url=args.api_url)
     try:
+        client = GitHubClient(token=args.token, api_url=args.api_url)
         snapshot = client.fetch_snapshot(args.repository)
         config = _load_score_config(client, args.repository, args.config, args.no_remote_config)
     except (GitHubError, ScoreConfigError, ValueError) as exc:

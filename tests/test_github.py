@@ -94,6 +94,50 @@ def test_get_paginated_json_follows_next_links() -> None:
     assert client.followed_urls == ["https://api.example.test/items?page=2"]
 
 
+def test_get_paginated_json_follows_enterprise_same_origin_next_links() -> None:
+    client = EnterprisePaginatedGitHubClient()
+
+    items = client.get_paginated_json(
+        "/items",
+        {"per_page": "100"},
+        description="items",
+        max_pages=2,
+    )
+
+    assert items == [{"id": 1}, {"id": 2}]
+    assert client.followed_urls == ["https://github.enterprise.test/api/v3/items?page=2"]
+
+
+def test_get_paginated_json_rejects_cross_origin_next_links_without_leaking_token() -> None:
+    client = CrossOriginPaginatedGitHubClient(token="secret-token")
+
+    with pytest.raises(GitHubError) as exc_info:
+        client.get_paginated_json(
+            "/items",
+            {"per_page": "100"},
+            description="items",
+            max_pages=2,
+        )
+
+    message = str(exc_info.value)
+    assert "pagination link" in message
+    assert "secret-token" not in message
+    assert client.followed_urls == []
+
+
+@pytest.mark.parametrize(
+    ("api_url", "message"),
+    (
+        ("http://api.example.test", "absolute HTTPS URL"),
+        ("https://token@example.test", "must not include credentials"),
+        ("https://api.example.test?token=secret", "must not include params"),
+    ),
+)
+def test_github_client_rejects_unsafe_api_urls(api_url: str, message: str) -> None:
+    with pytest.raises(GitHubError, match=message):
+        GitHubClient(api_url=api_url)
+
+
 def test_get_paginated_json_rejects_unbounded_pagination() -> None:
     client = PaginatedGitHubClient()
 
@@ -168,6 +212,38 @@ class PaginatedGitHubClient(GitHubClient):
     def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
         self.followed_urls.append(url)
         return GitHubResponse([{"id": 2}], {})
+
+
+class EnterprisePaginatedGitHubClient(GitHubClient):
+    def __init__(self) -> None:
+        super().__init__(api_url="https://github.enterprise.test/api/v3")
+        self.followed_urls: list[str] = []
+
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
+        return GitHubResponse(
+            [{"id": 1}],
+            {"link": '<https://github.enterprise.test/api/v3/items?page=2>; rel="next"'},
+        )
+
+    def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
+        self.followed_urls.append(url)
+        return GitHubResponse([{"id": 2}], {})
+
+
+class CrossOriginPaginatedGitHubClient(GitHubClient):
+    def __init__(self, *, token: str) -> None:
+        super().__init__(token=token, api_url="https://api.example.test")
+        self.followed_urls: list[str] = []
+
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
+        return GitHubResponse(
+            [{"id": 1}],
+            {"link": '<https://evil.example.test/items?page=2>; rel="next"'},
+        )
+
+    def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
+        self.followed_urls.append(url)
+        raise AssertionError(f"off-origin URL should not be followed: {url}")
 
 
 def _base_payloads() -> dict[str, object]:

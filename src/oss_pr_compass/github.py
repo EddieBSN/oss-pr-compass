@@ -32,7 +32,7 @@ class GitHubResponse:
 class GitHubClient:
     def __init__(self, *, token: str | None = None, api_url: str = "https://api.github.com"):
         self.token = token
-        self.api_url = api_url.rstrip("/")
+        self.api_url, self._api_origin = _normalize_api_url(api_url)
 
     def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
@@ -175,6 +175,10 @@ class GitHubClient:
                 )
 
             page += 1
+            if _url_origin(next_url) != self._api_origin:
+                raise GitHubError(
+                    f"Refusing to follow off-origin GitHub pagination link for {path}."
+                )
             response = self._request_json_url(next_url, path)
 
     def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
@@ -319,6 +323,35 @@ def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(labels, list):
         return ()
     return tuple(label["name"] for label in labels if isinstance(label, dict) and "name" in label)
+
+
+def _normalize_api_url(value: str) -> tuple[str, tuple[str, str, int]]:
+    cleaned = value.strip().rstrip("/")
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise GitHubError("--api-url must be an absolute HTTPS URL.")
+    if parsed.username or parsed.password:
+        raise GitHubError("--api-url must not include credentials.")
+    if parsed.params or parsed.query or parsed.fragment:
+        raise GitHubError("--api-url must not include params, query, or fragment components.")
+    return cleaned, _origin_from_parsed_url(parsed)
+
+
+def _url_origin(value: str) -> tuple[str, str, int]:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise GitHubError("GitHub pagination link must be an absolute HTTPS URL.")
+    if parsed.username or parsed.password:
+        raise GitHubError("GitHub pagination link must not include credentials.")
+    return _origin_from_parsed_url(parsed)
+
+
+def _origin_from_parsed_url(parsed: urllib.parse.ParseResult) -> tuple[str, str, int]:
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise GitHubError("GitHub API URL must include a valid port.") from exc
+    return parsed.scheme, parsed.hostname.lower(), port
 
 
 def _validate_list_payload(
