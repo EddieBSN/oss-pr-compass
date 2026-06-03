@@ -45,7 +45,7 @@ class GitHubClient:
     ):
         self.token = token
         self.api_url, self._api_origin = _normalize_api_url(api_url)
-        self._sleep = sleep or time.sleep
+        self._sleep = time.sleep if sleep is None else sleep
 
     def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
@@ -201,7 +201,10 @@ class GitHubClient:
                 with urllib.request.urlopen(request, timeout=30) as response:
                     body = response.read().decode("utf-8")
                     payload = json.loads(body) if body else None
-                    return GitHubResponse(payload=payload, headers=_normalize_headers(response.headers))
+                    return GitHubResponse(
+                        payload=payload,
+                        headers=_normalize_headers(response.headers),
+                    )
             except urllib.error.HTTPError as exc:
                 retry_after = _retry_after_seconds(exc.headers)
                 error = _github_http_error(exc, display_path)
@@ -301,7 +304,8 @@ class GitHubClient:
             raise GitHubError(f"Expected search count for open {item_type}s from /search/issues.")
         if payload.get("incomplete_results") is True:
             raise GitHubError(
-                f"GitHub Search returned incomplete results for open {item_type}s from /search/issues."
+                "GitHub Search returned incomplete results "
+                f"for open {item_type}s from /search/issues."
             )
         return int(payload["total_count"])
 
