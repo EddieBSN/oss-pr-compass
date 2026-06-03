@@ -198,6 +198,8 @@ class GitHubClient:
             ) from exc
         except urllib.error.URLError as exc:
             raise GitHubError(f"Could not reach GitHub API: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise GitHubError(f"GitHub API timed out for {display_path}: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise GitHubError(
                 f"GitHub API returned invalid JSON for {display_path}: {exc.msg}"
