@@ -52,6 +52,13 @@ def test_fetch_snapshot_uses_search_counts_for_open_queues() -> None:
     assert snapshot.open_issue_count == 456
 
 
+def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
+    client = IncompleteSearchGitHubClient(_base_payloads())
+
+    with pytest.raises(GitHubError, match="incomplete results"):
+        client.fetch_snapshot("owner/repo")
+
+
 def test_fetch_snapshot_rejects_malformed_list_payloads() -> None:
     payloads = _base_payloads()
     payloads["/repos/owner/repo/issues"] = {"message": "not a list"}
@@ -239,6 +246,13 @@ class FakeGitHubClient(GitHubClient):
 
     def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
         return GitHubResponse(self.get_json(path, params), {})
+
+
+class IncompleteSearchGitHubClient(FakeGitHubClient):
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        if path == "/search/issues":
+            return {"total_count": 999, "incomplete_results": True}
+        return super().get_json(path, params)
 
 
 class PaginatedGitHubClient(GitHubClient):
