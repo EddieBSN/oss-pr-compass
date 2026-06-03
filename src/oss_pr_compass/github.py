@@ -274,6 +274,10 @@ class GitHubClient:
         )
         if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
             raise GitHubError(f"Expected search count for open {item_type}s from /search/issues.")
+        if payload.get("incomplete_results") is True:
+            raise GitHubError(
+                f"GitHub Search returned incomplete results for open {item_type}s from /search/issues."
+            )
         return int(payload["total_count"])
 
     def _headers(self) -> dict[str, str]:
