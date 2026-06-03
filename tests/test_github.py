@@ -179,6 +179,49 @@ def test_get_json_includes_rate_limit_headers(monkeypatch: pytest.MonkeyPatch) -
     assert "X-RateLimit-Reset: 1780000000" in message
 
 
+def test_get_json_wraps_connection_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test")
+
+    with pytest.raises(GitHubError) as exc_info:
+        client.get_json("/timeout")
+
+    message = str(exc_info.value)
+    assert "GitHub API timed out for /timeout" in message
+    assert "timed out" in message
+
+
+def test_get_json_wraps_response_read_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> object:
+        return TimeoutResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = GitHubClient(api_url="https://api.example.test")
+
+    with pytest.raises(GitHubError) as exc_info:
+        client.get_json("/slow-body")
+
+    message = str(exc_info.value)
+    assert "GitHub API timed out for /slow-body" in message
+    assert "read timed out" in message
+
+
+class TimeoutResponse:
+    headers: dict[str, str] = {}
+
+    def __enter__(self) -> TimeoutResponse:
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        raise TimeoutError("read timed out")
+
+
 class FakeGitHubClient(GitHubClient):
     def __init__(self, payloads: dict[str, object]):
         super().__init__(api_url="https://api.example.test")
