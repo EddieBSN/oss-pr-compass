@@ -135,9 +135,10 @@ Archived repositories always receive a `needs-work` verdict, even when they stil
 metadata.
 
 GitHub API collection follows Link-header pagination with endpoint-specific caps to avoid unbounded workflow runtime.
-Open PR and issue queue counts come from GitHub Search totals. Issue triage quality samples recently updated open
-issues and comments; large repositories are marked with sampled confidence metadata when the total issue count exceeds
-the inspected sample.
+Open PR and issue queue counts come from GitHub Search totals. If GitHub Search reports incomplete queue-count results,
+`oss-pr-compass` exits with a GitHub API error instead of treating those totals as exact. Issue triage quality samples
+recently updated open issues and comments; large repositories are marked with sampled confidence metadata when the total
+issue count exceeds the inspected sample.
 
 ## Scoring Configuration
 
