@@ -23,6 +23,21 @@ SIGNAL_WEIGHTS = {
 }
 MAX_SCORE = sum(SIGNAL_WEIGHTS.values())
 MAINTAINER_ASSOCIATIONS = {"COLLABORATOR", "MEMBER", "OWNER"}
+PULL_REQUEST_TEMPLATE_FILES = frozenset(
+    {
+        "PULL_REQUEST_TEMPLATE.md",
+        "pull_request_template.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/pull_request_template.md",
+        "docs/PULL_REQUEST_TEMPLATE.md",
+        "docs/pull_request_template.md",
+    }
+)
+PULL_REQUEST_TEMPLATE_DIRECTORIES = (
+    "PULL_REQUEST_TEMPLATE/",
+    ".github/PULL_REQUEST_TEMPLATE/",
+    "docs/PULL_REQUEST_TEMPLATE/",
+)
 
 
 def assess_repository(
@@ -167,15 +182,7 @@ def _contribution_docs_signal(snapshot: RepositorySnapshot) -> Signal:
 
 def _pr_template_signal(snapshot: RepositorySnapshot) -> Signal:
     max_points = SIGNAL_WEIGHTS["Pull request template"]
-    entries = snapshot.root_entries
-    has_template = any(
-        entry in entries
-        for entry in (
-            "PULL_REQUEST_TEMPLATE.md",
-            ".github/PULL_REQUEST_TEMPLATE.md",
-            ".github/pull_request_template.md",
-        )
-    )
+    has_template = any(_is_pull_request_template_entry(entry) for entry in snapshot.root_entries)
     if has_template:
         return Signal(
             "Pull request template", max_points, max_points, "Pull request template found."
@@ -528,6 +535,18 @@ def _is_contributor_friendly_label(label: str) -> bool:
     }
     prefixes = ("good first", "help wanted", "first timer")
     return normalized in exact_matches or any(normalized.startswith(prefix) for prefix in prefixes)
+
+
+def _is_pull_request_template_entry(entry: str) -> bool:
+    if entry in PULL_REQUEST_TEMPLATE_FILES:
+        return True
+    for directory in PULL_REQUEST_TEMPLATE_DIRECTORIES:
+        if not entry.startswith(directory):
+            continue
+        filename = entry.removeprefix(directory)
+        if filename and "/" not in filename and filename.lower().endswith(".md"):
+            return True
+    return False
 
 
 def _is_stale_unanswered_external_issue(issue: IssueSnapshot, cutoff: datetime) -> bool:

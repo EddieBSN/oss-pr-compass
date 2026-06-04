@@ -120,7 +120,7 @@ The score is intentionally simple and inspectable:
 | Recent repository activity | 14 | Repository is not archived and was pushed within 45 days. | 8 points when pushed within 90 days. |
 | Merged pull request activity | 18 | At least 20 merged PRs in the lookback window. | 14 points for at least 5, or 7 points for at least 1. |
 | Contribution documentation | 14 | `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are present. | 9 points for contributing docs, 5 points for code of conduct. |
-| Pull request template | 8 | A root or `.github` pull request template is present. | None. |
+| Pull request template | 8 | A supported pull request template is present in the root, `docs/`, `.github/`, or a `PULL_REQUEST_TEMPLATE/` directory. | None. |
 | CI and test signals | 14 | CI workflows and a `tests` or `test` directory are present. | 7 points for CI, 7 points for tests. |
 | Open pull request queue | 8 | 10 or fewer open PRs. | 6 points for 50 or fewer, or 3 points for 100 or fewer. |
 | Issue triage signals | 12 | Contributor labels, labeled open issues, manageable issue count, few stale unanswered issues, and recent maintainer responses are all present. | Subscores are contributor labels 3, labeled issues 3, issue queue 2, stale unanswered issues 2, maintainer responses 2. |
@@ -138,7 +138,8 @@ GitHub API collection follows Link-header pagination with endpoint-specific caps
 Open PR and issue queue counts come from GitHub Search totals. If GitHub Search reports incomplete queue-count results,
 `oss-pr-compass` exits with a GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests
 retry transient network failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or
-secondary-rate-limit 403 responses. Issue triage quality samples recently updated open issues and comments; large
+secondary-rate-limit 403 responses. Pull request template detection covers root, `docs/`, `.github/`, and supported
+`PULL_REQUEST_TEMPLATE/` directories. Issue triage quality samples recently updated open issues and comments; large
 repositories are marked with sampled confidence metadata when the total issue count exceeds the inspected sample.
 
 ## Scoring Configuration

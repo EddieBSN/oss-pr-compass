@@ -87,6 +87,45 @@ def test_fetch_snapshot_tolerates_malformed_issue_labels() -> None:
     assert snapshot.open_issues[0].labels == ()
 
 
+def test_fetch_snapshot_collects_pull_request_template_metadata() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/contents/"] = [
+        {"name": "pull_request_template.md", "type": "file"},
+        {"name": "PULL_REQUEST_TEMPLATE", "type": "dir"},
+    ]
+    payloads["/repos/owner/repo/contents/.github"] = [
+        {"name": "PULL_REQUEST_TEMPLATE.md", "type": "file"},
+        {"name": "PULL_REQUEST_TEMPLATE", "type": "dir"},
+    ]
+    payloads["/repos/owner/repo/contents/docs"] = [
+        {"name": "PULL_REQUEST_TEMPLATE.md", "type": "file"},
+        {"name": "PULL_REQUEST_TEMPLATE", "type": "dir"},
+    ]
+    payloads["/repos/owner/repo/contents/PULL_REQUEST_TEMPLATE"] = [
+        {"name": "feature.md", "type": "file"},
+    ]
+    payloads["/repos/owner/repo/contents/.github/PULL_REQUEST_TEMPLATE"] = [
+        {"name": "bugfix.md", "type": "file"},
+        {"name": "screenshots.md", "type": "dir"},
+    ]
+    payloads["/repos/owner/repo/contents/docs/PULL_REQUEST_TEMPLATE"] = [
+        {"name": "release.md", "type": "file"},
+    ]
+    client = FakeGitHubClient(payloads)
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert {
+        "pull_request_template.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "docs/PULL_REQUEST_TEMPLATE.md",
+        "PULL_REQUEST_TEMPLATE/feature.md",
+        ".github/PULL_REQUEST_TEMPLATE/bugfix.md",
+        "docs/PULL_REQUEST_TEMPLATE/release.md",
+    } <= snapshot.root_entries
+    assert ".github/PULL_REQUEST_TEMPLATE/screenshots.md" not in snapshot.root_entries
+
+
 def test_get_paginated_json_follows_next_links() -> None:
     client = PaginatedGitHubClient()
 
@@ -432,6 +471,10 @@ def _base_payloads() -> dict[str, object]:
         },
         "/repos/owner/repo/contents/": [],
         "/repos/owner/repo/contents/.github": [],
+        "/repos/owner/repo/contents/docs": [],
+        "/repos/owner/repo/contents/PULL_REQUEST_TEMPLATE": [],
+        "/repos/owner/repo/contents/.github/PULL_REQUEST_TEMPLATE": [],
+        "/repos/owner/repo/contents/docs/PULL_REQUEST_TEMPLATE": [],
         "/repos/owner/repo/contents/.github/workflows": [],
         "/repos/owner/repo/pulls": [],
         "/repos/owner/repo/labels": [],
