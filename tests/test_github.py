@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 import pytest
 
@@ -97,11 +98,40 @@ def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> 
     ]
 
 
+def test_fetch_snapshot_counts_merged_prs_with_lookback_search_not_closed_pr_cap() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/pulls"] = [
+        {"merged_at": "2024-01-01T00:00:00Z", "updated_at": "2026-06-01T00:00:00Z"}
+        for _ in range(500)
+    ]
+    client = RecordingGitHubClient(payloads)
+
+    snapshot = client.fetch_snapshot(
+        "owner/repo",
+        merged_since=datetime(2026, 3, 4, tzinfo=timezone.utc),
+    )
+
+    assert snapshot.merged_pr_count == 24
+    assert snapshot.merged_prs == ()
+    assert "/repos/owner/repo/pulls" not in client.paths
+    assert "repo:owner/repo is:pr is:merged merged:>=2026-03-04" in client.search_queries
+
+
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
     client = IncompleteSearchGitHubClient(_base_payloads())
 
     with pytest.raises(GitHubError, match="incomplete results"):
         client.fetch_snapshot("owner/repo")
+
+
+def test_fetch_snapshot_rejects_incomplete_merged_pr_search_counts() -> None:
+    client = IncompleteMergedPullRequestSearchGitHubClient(_base_payloads())
+
+    with pytest.raises(GitHubError, match="merged pull requests"):
+        client.fetch_snapshot(
+            "owner/repo",
+            merged_since=datetime(2026, 3, 4, tzinfo=timezone.utc),
+        )
 
 
 def test_fetch_snapshot_rejects_malformed_list_payloads() -> None:
@@ -434,6 +464,8 @@ class FakeGitHubClient(GitHubClient):
     def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
         if path == "/search/issues":
             query = (params or {}).get("q", "")
+            if "is:pr is:merged" in query:
+                return {"total_count": 24}
             if "type:pr" in query:
                 return {"total_count": 123}
             if "type:issue" in query:
@@ -461,6 +493,14 @@ class RecordingGitHubClient(FakeGitHubClient):
 class IncompleteSearchGitHubClient(FakeGitHubClient):
     def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
         if path == "/search/issues":
+            return {"total_count": 999, "incomplete_results": True}
+        return super().get_json(path, params)
+
+
+class IncompleteMergedPullRequestSearchGitHubClient(FakeGitHubClient):
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        query = (params or {}).get("q", "")
+        if path == "/search/issues" and "is:pr is:merged" in query:
             return {"total_count": 999, "incomplete_results": True}
         return super().get_json(path, params)
 

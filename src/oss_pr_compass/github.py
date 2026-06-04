@@ -55,7 +55,12 @@ class GitHubClient:
         self.api_url, self._api_origin = _normalize_api_url(api_url)
         self._sleep = time.sleep if sleep is None else sleep
 
-    def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
+    def fetch_snapshot(
+        self,
+        repository: str,
+        *,
+        merged_since: datetime | None = None,
+    ) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
         repo = self.get_json(f"/repos/{owner}/{name}")
         if not isinstance(repo, dict):
@@ -69,18 +74,23 @@ class GitHubClient:
         docs_entries = {f"docs/{entry}" for entry in self._content_names(owner, name, "docs")}
         pull_request_template_entries = self._pull_request_template_entries(owner, name)
         workflow_entries = set(self._content_names(owner, name, ".github/workflows"))
-        closed_prs = self._get_list(
-            f"/repos/{owner}/{name}/pulls",
-            {
-                "state": "closed",
-                "sort": "updated",
-                "direction": "desc",
-                "per_page": "100",
-            },
-            "closed pull requests",
-            max_pages=CLOSED_PULL_REQUEST_PAGE_LIMIT,
-            allow_truncated=True,
-        )
+        if merged_since is None:
+            closed_prs = self._get_list(
+                f"/repos/{owner}/{name}/pulls",
+                {
+                    "state": "closed",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": "100",
+                },
+                "closed pull requests",
+                max_pages=CLOSED_PULL_REQUEST_PAGE_LIMIT,
+                allow_truncated=True,
+            )
+            merged_pr_count = None
+        else:
+            closed_prs = []
+            merged_pr_count = self._merged_pull_request_count(owner, name, merged_since)
         labels = self._get_list(
             f"/repos/{owner}/{name}/labels",
             {"per_page": "100"},
@@ -127,6 +137,7 @@ class GitHubClient:
             workflow_entries=frozenset(workflow_entries),
             merged_prs=merged_prs,
             open_pr_count=open_pr_count,
+            merged_pr_count=merged_pr_count,
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
@@ -339,6 +350,25 @@ class GitHubClient:
             raise GitHubError(
                 "GitHub Search returned incomplete results "
                 f"for open {item_type}s from /search/issues."
+            )
+        return int(payload["total_count"])
+
+    def _merged_pull_request_count(self, owner: str, name: str, merged_since: datetime) -> int:
+        merged_since_date = merged_since.date().isoformat()
+        query = f"repo:{owner}/{name} is:pr is:merged merged:>={merged_since_date}"
+        payload = self.get_json(
+            "/search/issues",
+            {
+                "q": query,
+                "per_page": "1",
+            },
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
+            raise GitHubError("Expected search count for merged pull requests from /search/issues.")
+        if payload.get("incomplete_results") is True:
+            raise GitHubError(
+                "GitHub Search returned incomplete results "
+                "for merged pull requests from /search/issues."
             )
         return int(payload["total_count"])
 

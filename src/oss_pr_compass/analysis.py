@@ -50,9 +50,12 @@ def assess_repository(
     now = now or datetime.now(timezone.utc)
     config = config or ScoreConfig()
     cutoff = now - timedelta(days=days)
-    merged_recently = [
-        pr for pr in snapshot.merged_prs if _parse_github_datetime(pr.get("merged_at")) >= cutoff
-    ]
+    if snapshot.merged_pr_count is None:
+        merged_pr_count = sum(
+            1 for pr in snapshot.merged_prs if _parse_github_datetime(pr.get("merged_at")) >= cutoff
+        )
+    else:
+        merged_pr_count = snapshot.merged_pr_count
 
     thresholds = config.thresholds
     candidate_signals = (
@@ -64,7 +67,7 @@ def assess_repository(
             thresholds.recent_activity_partial_days,
         ),
         _merged_pr_signal(
-            merged_recently,
+            merged_pr_count,
             days,
             thresholds.merged_prs_full,
             thresholds.merged_prs_partial,
@@ -143,14 +146,13 @@ def _activity_signal(
 
 
 def _merged_pr_signal(
-    merged_recently: list[dict[str, object]],
+    count: int,
     days: int,
     full_count: int,
     partial_count: int,
     minimum_count: int,
 ) -> Signal:
     max_points = SIGNAL_WEIGHTS["Merged pull request activity"]
-    count = len(merged_recently)
     if count >= full_count:
         points = max_points
     elif count >= partial_count:

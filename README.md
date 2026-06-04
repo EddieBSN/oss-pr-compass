@@ -138,12 +138,14 @@ Archived repositories always receive a `needs-work` verdict, even when they stil
 metadata.
 
 GitHub API collection follows Link-header pagination with endpoint-specific caps to avoid unbounded workflow runtime.
-Open PR and issue queue counts come from GitHub Search totals. If GitHub Search reports incomplete queue-count results,
-`oss-pr-compass` exits with a GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests
-retry transient network failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or
-secondary-rate-limit 403 responses. Pull request template detection covers root, `docs/`, `.github/`, and supported
-`PULL_REQUEST_TEMPLATE/` directories. Issue triage quality samples recently updated open issues and comments; large
-repositories are marked with sampled confidence metadata when the total issue count exceeds the inspected sample.
+Merged PR activity, open PR queues, and open issue queues come from GitHub Search totals. Merged PR activity uses a
+lookback-bound `is:merged merged:>=...` query instead of capped recently updated closed PR pages. If GitHub Search
+reports incomplete count results, `oss-pr-compass` exits with a GitHub API error instead of treating those totals as
+exact. Idempotent GitHub GET requests retry transient network failures, HTTP 502/503/504 responses, and short
+`Retry-After` windows for 429 or secondary-rate-limit 403 responses. Pull request template detection covers root,
+`docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories. Issue triage quality samples recently updated
+open issues and comments; large repositories are marked with sampled confidence metadata when the total issue count
+exceeds the inspected sample.
 
 ## Scoring Configuration
 

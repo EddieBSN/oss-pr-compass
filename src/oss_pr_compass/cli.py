@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from oss_pr_compass.analysis import assess_repository
@@ -85,14 +86,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         owner, name = parse_repository(args.repository)
         requested_repository = f"{owner}/{name}"
+        now = datetime.now(timezone.utc)
         client = GitHubClient(token=args.token, api_url=args.api_url)
-        snapshot = client.fetch_snapshot(requested_repository)
+        snapshot = client.fetch_snapshot(
+            requested_repository,
+            merged_since=now - timedelta(days=args.days),
+        )
         config = _load_score_config(client, snapshot.full_name, args.config, args.no_remote_config)
     except (GitHubError, ScoreConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    assessment = assess_repository(snapshot, days=args.days, config=config)
+    assessment = assess_repository(snapshot, days=args.days, now=now, config=config)
 
     if args.github_step_summary is not None:
         try:
