@@ -14,6 +14,7 @@ class IssueSnapshot:
     comment_count: int
     author_association: str
     latest_maintainer_comment_at: datetime | None = None
+    latest_external_activity_at: datetime | None = None
 
 
 @dataclass(frozen=True)

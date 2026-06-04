@@ -435,6 +435,89 @@ def test_issue_signal_uses_oldest_issue_sample_for_stale_unanswered_detection() 
     assert issue_signal.sampled is True
 
 
+def test_issue_signal_treats_external_followup_after_maintainer_response_as_stale() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/followup-stale",
+        html_url="https://github.com/example/followup-stale",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=10,
+                labels=("bug",),
+                created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+                comment_count=2,
+                author_association="CONTRIBUTOR",
+                latest_maintainer_comment_at=datetime(2026, 2, 15, tzinfo=timezone.utc),
+                latest_external_activity_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points < issue_signal.max_points
+    assert "1 stale unanswered" in issue_signal.detail
+
+
+def test_issue_signal_does_not_treat_issue_as_stale_when_maintainer_responded_last() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/followup-answered",
+        html_url="https://github.com/example/followup-answered",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=11,
+                labels=("bug",),
+                created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+                comment_count=2,
+                author_association="CONTRIBUTOR",
+                latest_external_activity_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+                latest_maintainer_comment_at=datetime(2026, 3, 11, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert "0 stale unanswered" in issue_signal.detail
+
+
 def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/drafts",

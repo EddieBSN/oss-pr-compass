@@ -595,13 +595,18 @@ def _is_pull_request_template_entry(entry: str) -> bool:
 
 
 def _is_stale_unanswered_external_issue(issue: IssueSnapshot, cutoff: datetime) -> bool:
-    if issue.created_at is None:
-        return False
     if issue.author_association.upper() in MAINTAINER_ASSOCIATIONS:
         return False
-    if issue.latest_maintainer_comment_at is not None:
+
+    latest_external_activity_at = issue.latest_external_activity_at or issue.created_at
+    if latest_external_activity_at is None:
         return False
-    return issue.created_at <= cutoff
+    if (
+        issue.latest_maintainer_comment_at is not None
+        and issue.latest_maintainer_comment_at >= latest_external_activity_at
+    ):
+        return False
+    return latest_external_activity_at <= cutoff
 
 
 def _normalize_label(label: str) -> str:
