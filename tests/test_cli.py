@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from oss_pr_compass.cli import _policy_failure_reason, format_assessment, format_markdown, main
 from oss_pr_compass.github import GitHubError
-from oss_pr_compass.model import Assessment, Recommendation, Signal
+from oss_pr_compass.model import Assessment, Recommendation, RepositorySnapshot, Signal
 
 
 def test_format_assessment_includes_signals_and_recommendations() -> None:
@@ -153,6 +153,63 @@ def test_main_reports_unsafe_api_url(capsys) -> None:
 
     captured = capsys.readouterr()
     assert "error: --api-url must be an absolute HTTPS URL." in captured.err
+
+
+def test_main_rejects_invalid_repository_before_api_paths(monkeypatch, capsys) -> None:
+    class InvalidInputClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str) -> object:
+            raise AssertionError("invalid repository input should fail before API paths are built")
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", InvalidInputClient)
+
+    assert main(["https://github.com/owner/repo/issues/1"]) == 2
+
+    captured = capsys.readouterr()
+    assert "error: repository must look like" in captured.err
+
+
+def test_main_uses_canonical_repository_for_remote_config(monkeypatch, capsys) -> None:
+    remote_config_repositories: list[str] = []
+
+    class CanonicalClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
+            return RepositorySnapshot(
+                full_name="new/repo",
+                html_url="https://github.com/new/repo",
+                description="Example",
+                stars=1,
+                forks=2,
+                archived=False,
+                pushed_at=None,
+                default_branch="main",
+                license_spdx="MIT",
+                topics=("python",),
+                root_entries=frozenset({"README.md", "CONTRIBUTING.md"}),
+                workflow_entries=frozenset({"ci.yml"}),
+                merged_prs=(),
+                open_pr_count=0,
+                labels=("good first issue",),
+                open_issues=(),
+                open_issue_count=0,
+            )
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            remote_config_repositories.append(repository)
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", CanonicalClient)
+
+    assert main(["old/repo"]) == 0
+
+    captured = capsys.readouterr()
+    assert "Repository: new/repo" in captured.out
+    assert remote_config_repositories == ["new/repo"]
 
 
 def test_main_reports_github_timeout(monkeypatch, capsys) -> None:

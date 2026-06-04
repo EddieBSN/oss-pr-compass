@@ -28,6 +28,9 @@ PULL_REQUEST_TEMPLATE_DIRECTORIES = (
     ".github/PULL_REQUEST_TEMPLATE",
     "docs/PULL_REQUEST_TEMPLATE",
 )
+REPOSITORY_ERROR_MESSAGE = (
+    "repository must look like 'owner/name' or 'https://github.com/owner/name'"
+)
 
 
 class GitHubError(RuntimeError):
@@ -57,6 +60,7 @@ class GitHubClient:
         repo = self.get_json(f"/repos/{owner}/{name}")
         if not isinstance(repo, dict):
             raise GitHubError(f"Expected repository object for /repos/{owner}/{name}.")
+        owner, name = _canonical_repository(repo, requested_owner=owner, requested_name=name)
 
         root_entries = set(self._content_names(owner, name, ""))
         github_entries = {
@@ -351,26 +355,53 @@ class GitHubClient:
 
 def parse_repository(value: str) -> tuple[str, str]:
     cleaned = value.strip()
-    if cleaned.startswith("https://github.com/"):
-        cleaned = cleaned.removeprefix("https://github.com/")
-    elif "://" in cleaned or cleaned.startswith("git@"):
-        raise ValueError(
-            "repository must look like 'owner/name' or 'https://github.com/owner/name'"
-        )
-
-    cleaned = cleaned.strip("/")
-    parts = cleaned.split("/")
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(
-            "repository must look like 'owner/name' or 'https://github.com/owner/name'"
-        )
-    return parts[0], parts[1]
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme or parsed.netloc:
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError(REPOSITORY_ERROR_MESSAGE)
+        return _parse_repository_path(parsed.path)
+    if "://" in cleaned or cleaned.startswith("git@") or "?" in cleaned or "#" in cleaned:
+        raise ValueError(REPOSITORY_ERROR_MESSAGE)
+    return _parse_repository_path(cleaned)
 
 
 def parse_datetime(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _parse_repository_path(value: str) -> tuple[str, str]:
+    parts = value.strip("/").split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError(REPOSITORY_ERROR_MESSAGE)
+
+    repo_name = parts[1].removesuffix(".git")
+    if not repo_name:
+        raise ValueError(REPOSITORY_ERROR_MESSAGE)
+    return parts[0], repo_name
+
+
+def _canonical_repository(
+    repo: dict[str, Any], *, requested_owner: str, requested_name: str
+) -> tuple[str, str]:
+    full_name = repo.get("full_name")
+    if not isinstance(full_name, str) or not full_name:
+        raise GitHubError(
+            f"Expected repository full_name for /repos/{requested_owner}/{requested_name}."
+        )
+    try:
+        return parse_repository(full_name)
+    except ValueError as exc:
+        raise GitHubError(
+            "GitHub API returned an invalid repository full_name "
+            f"for /repos/{requested_owner}/{requested_name}."
+        ) from exc
 
 
 def _issue_number_from_url(value: object) -> int | None:

@@ -14,7 +14,7 @@ from oss_pr_compass.config import (
     load_score_config,
     parse_score_config,
 )
-from oss_pr_compass.github import GitHubClient, GitHubError
+from oss_pr_compass.github import GitHubClient, GitHubError, parse_repository
 from oss_pr_compass.model import Assessment, Signal
 
 VERDICT_RANK = {"needs-work": 0, "promising": 1, "strong": 2}
@@ -83,9 +83,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--fail-under must be between 0 and 100")
 
     try:
+        owner, name = parse_repository(args.repository)
+        requested_repository = f"{owner}/{name}"
         client = GitHubClient(token=args.token, api_url=args.api_url)
-        snapshot = client.fetch_snapshot(args.repository)
-        config = _load_score_config(client, args.repository, args.config, args.no_remote_config)
+        snapshot = client.fetch_snapshot(requested_repository)
+        config = _load_score_config(client, snapshot.full_name, args.config, args.no_remote_config)
     except (GitHubError, ScoreConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
