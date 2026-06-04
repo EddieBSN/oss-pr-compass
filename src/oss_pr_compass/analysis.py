@@ -298,16 +298,22 @@ def _issue_triage_signal(
         stale_points = 0
 
     response_cutoff = now - timedelta(days=thresholds.maintainer_response_window_days)
+    external_response_issues = [
+        issue for issue in issues if issue.author_association.upper() not in MAINTAINER_ASSOCIATIONS
+    ]
     recent_maintainer_responses = [
         issue
-        for issue in issues
+        for issue in external_response_issues
         if issue.latest_maintainer_comment_at is not None
         and issue.latest_maintainer_comment_at >= response_cutoff
     ]
+    external_response_issue_count = len(external_response_issues)
     response_ratio = (
-        len(recent_maintainer_responses) / sampled_issue_count if sampled_issue_count else 1.0
+        len(recent_maintainer_responses) / external_response_issue_count
+        if external_response_issue_count
+        else 0.0
     )
-    if missing_issue_sample or no_open_issues:
+    if missing_issue_sample or no_open_issues or external_response_issue_count == 0:
         response_points = 0
     elif response_ratio >= thresholds.maintainer_response_full_ratio:
         response_points = 2
@@ -350,10 +356,17 @@ def _issue_triage_signal(
             )
         else:
             stale_detail = f"{len(stale_unanswered)} stale unanswered in sample"
+        if external_response_issue_count:
+            response_detail = (
+                f"{len(recent_maintainer_responses)}/{external_response_issue_count} "
+                "external sampled issues with recent maintainer responses"
+            )
+        else:
+            response_detail = "0 external sampled issues for maintainer response checks"
         detail = (
             f"{label_detail}; {labeled_issue_count}/{sampled_issue_count} sampled open issues "
             f"labeled; {total_issue_count} total open issues; "
-            f"{stale_detail}; {len(recent_maintainer_responses)} recent maintainer responses."
+            f"{stale_detail}; {response_detail}."
         )
     if snapshot.issue_comment_evidence_incomplete:
         detail = f"{detail.rstrip('.')}; issue comment evidence incomplete."
@@ -363,7 +376,7 @@ def _issue_triage_signal(
     confidence = "high"
     if snapshot.issue_comment_evidence_incomplete:
         confidence = "incomplete"
-    elif no_open_issues:
+    elif no_open_issues or (sampled_issue_count > 0 and external_response_issue_count == 0):
         confidence = "no-data"
     elif sampled:
         confidence = "sampled"
