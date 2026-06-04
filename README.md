@@ -121,7 +121,7 @@ The score is intentionally simple and inspectable:
 | --- | ---: | --- | --- |
 | OSS license | 12 | GitHub reports license metadata. | None. |
 | Recent repository activity | 14 | Repository is not archived and was pushed within 45 days. | 8 points when pushed within 90 days. |
-| Merged pull request activity | 18 | At least 20 merged PRs in the lookback window. | 14 points for at least 5, or 7 points for at least 1. |
+| Merged pull request activity | 18 | At least 20 external human merged PRs in the lookback window. | 14 points for at least 5, or 7 points for at least 1. Maintainer and bot PRs are reported but do not count toward outside-contribution credit. |
 | Contribution documentation | 14 | `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are present. | 9 points for contributing docs, 5 points for code of conduct. |
 | Pull request template | 8 | A supported pull request template is present in the root, `docs/`, `.github/`, or a `PULL_REQUEST_TEMPLATE/` directory. | None. |
 | CI and test signals | 14 | CI workflows and a `tests` or `test` directory are present. | 7 points for CI, 7 points for tests. |
@@ -138,14 +138,15 @@ Archived repositories always receive a `needs-work` verdict, even when they stil
 metadata.
 
 GitHub API collection follows Link-header pagination with endpoint-specific caps to avoid unbounded workflow runtime.
-Merged PR activity, open PR queues, and open issue queues come from GitHub Search totals. Merged PR activity uses a
-lookback-bound `is:merged merged:>=...` query instead of capped recently updated closed PR pages. If GitHub Search
-reports incomplete count results, `oss-pr-compass` exits with a GitHub API error instead of treating those totals as
-exact. Idempotent GitHub GET requests retry transient network failures, HTTP 502/503/504 responses, and short
-`Retry-After` windows for 429 or secondary-rate-limit 403 responses. Pull request template detection covers root,
-`docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories. Issue triage quality samples recently updated
-open issues and comments; large repositories are marked with sampled confidence metadata when the total issue count
-exceeds the inspected sample.
+Merged PR activity, open PR queues, and open issue queues come from GitHub Search. Merged PR activity uses a
+lookback-bound `is:merged merged:>=...` query instead of capped recently updated closed PR pages, then classifies
+merged PR authors as external human, maintainer, or bot/app before scoring. If GitHub Search reports incomplete count
+results or cannot return the merged PR items needed for classification within the bounded page limit, `oss-pr-compass`
+exits with a GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests retry transient
+network failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or secondary-rate-limit 403
+responses. Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/`
+directories. Issue triage quality samples recently updated open issues and comments; large repositories are marked with
+sampled confidence metadata when the total issue count exceeds the inspected sample.
 
 ## Scoring Configuration
 

@@ -33,6 +33,9 @@ class RepositorySnapshot:
     merged_prs: tuple[dict[str, Any], ...]
     open_pr_count: int
     merged_pr_count: int | None = None
+    external_merged_pr_count: int | None = None
+    maintainer_merged_pr_count: int | None = None
+    bot_merged_pr_count: int | None = None
     labels: tuple[str, ...] = ()
     open_issues: tuple[IssueSnapshot, ...] = ()
     open_issue_count: int | None = None

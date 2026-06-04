@@ -19,6 +19,7 @@ BASE_RETRY_DELAY_SECONDS = 0.25
 CLOSED_PULL_REQUEST_PAGE_LIMIT = 5
 ISSUE_COMMENT_PAGE_LIMIT = 3
 MAX_RETRY_AFTER_SECONDS = 5.0
+MERGED_PULL_REQUEST_SEARCH_PAGE_LIMIT = 10
 OPEN_ISSUE_SAMPLE_PAGE_LIMIT = 3
 REPOSITORY_LABEL_PAGE_LIMIT = 10
 RETRY_AFTER_HTTP_STATUS_CODES = {403, 429}
@@ -41,6 +42,14 @@ class GitHubError(RuntimeError):
 class GitHubResponse:
     payload: Any
     headers: dict[str, str]
+
+
+@dataclass(frozen=True)
+class MergedPullRequestCounts:
+    total: int
+    external: int
+    maintainer: int
+    bot: int
 
 
 class GitHubClient:
@@ -88,9 +97,16 @@ class GitHubClient:
                 allow_truncated=True,
             )
             merged_pr_count = None
+            external_merged_pr_count = None
+            maintainer_merged_pr_count = None
+            bot_merged_pr_count = None
         else:
             closed_prs = []
-            merged_pr_count = self._merged_pull_request_count(owner, name, merged_since)
+            merged_counts = self._merged_pull_request_counts(owner, name, merged_since)
+            merged_pr_count = merged_counts.total
+            external_merged_pr_count = merged_counts.external
+            maintainer_merged_pr_count = merged_counts.maintainer
+            bot_merged_pr_count = merged_counts.bot
         labels = self._get_list(
             f"/repos/{owner}/{name}/labels",
             {"per_page": "100"},
@@ -138,6 +154,9 @@ class GitHubClient:
             merged_prs=merged_prs,
             open_pr_count=open_pr_count,
             merged_pr_count=merged_pr_count,
+            external_merged_pr_count=external_merged_pr_count,
+            maintainer_merged_pr_count=maintainer_merged_pr_count,
+            bot_merged_pr_count=bot_merged_pr_count,
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
@@ -353,24 +372,93 @@ class GitHubClient:
             )
         return int(payload["total_count"])
 
-    def _merged_pull_request_count(self, owner: str, name: str, merged_since: datetime) -> int:
+    def _merged_pull_request_counts(
+        self, owner: str, name: str, merged_since: datetime
+    ) -> MergedPullRequestCounts:
         merged_since_date = merged_since.date().isoformat()
         query = f"repo:{owner}/{name} is:pr is:merged merged:>={merged_since_date}"
-        payload = self.get_json(
+        total_count, items = self._search_issue_items(
+            query,
+            "merged pull requests",
+            max_pages=MERGED_PULL_REQUEST_SEARCH_PAGE_LIMIT,
+        )
+        if len(items) < total_count:
+            raise GitHubError(
+                "GitHub Search did not return every merged pull request needed "
+                "to classify external contribution activity."
+            )
+
+        external = 0
+        maintainer = 0
+        bot = 0
+        for item in items:
+            if _is_bot_user(item.get("user")):
+                bot += 1
+            elif str(item.get("author_association") or "").upper() in MAINTAINER_ASSOCIATIONS:
+                maintainer += 1
+            else:
+                external += 1
+        return MergedPullRequestCounts(
+            total=total_count,
+            external=external,
+            maintainer=maintainer,
+            bot=bot,
+        )
+
+    def _search_issue_items(
+        self,
+        query: str,
+        description: str,
+        *,
+        max_pages: int,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        if max_pages <= 0:
+            raise ValueError("max_pages must be greater than zero")
+
+        items: list[dict[str, Any]] = []
+        response = self.get_json_response(
             "/search/issues",
             {
                 "q": query,
-                "per_page": "1",
+                "per_page": "100",
             },
         )
-        if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
-            raise GitHubError("Expected search count for merged pull requests from /search/issues.")
-        if payload.get("incomplete_results") is True:
-            raise GitHubError(
-                "GitHub Search returned incomplete results "
-                "for merged pull requests from /search/issues."
-            )
-        return int(payload["total_count"])
+        page = 1
+        total_count: int | None = None
+
+        while True:
+            payload = response.payload
+            if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
+                raise GitHubError(f"Expected search count for {description} from /search/issues.")
+            if payload.get("incomplete_results") is True:
+                raise GitHubError(
+                    f"GitHub Search returned incomplete results for {description} "
+                    "from /search/issues."
+                )
+            if not isinstance(payload.get("items"), list):
+                raise GitHubError(f"Expected search items for {description} from /search/issues.")
+
+            if total_count is None:
+                total_count = int(payload["total_count"])
+            items.extend(_validate_list_payload(payload["items"], "/search/issues", description))
+
+            next_url = _next_link(response.headers)
+            if next_url is None:
+                return total_count, items
+            if len(items) >= total_count:
+                return total_count, items[:total_count]
+            if page >= max_pages:
+                raise GitHubError(
+                    f"GitHub Search pagination for {description} exceeded {max_pages} pages."
+                )
+
+            page += 1
+            if _url_origin(next_url) != self._api_origin:
+                raise GitHubError(
+                    "Refusing to follow off-origin GitHub search pagination "
+                    f"link for {description}."
+                )
+            response = self._request_json_url(next_url, "/search/issues")
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -448,6 +536,14 @@ def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(labels, list):
         return ()
     return tuple(label["name"] for label in labels if isinstance(label, dict) and "name" in label)
+
+
+def _is_bot_user(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    user_type = str(value.get("type") or "").casefold()
+    login = str(value.get("login") or "").casefold()
+    return user_type == "bot" or login.endswith("[bot]")
 
 
 def _normalize_api_url(value: str) -> tuple[str, tuple[str, str, int]]:

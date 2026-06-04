@@ -56,6 +56,7 @@ def assess_repository(
         )
     else:
         merged_pr_count = snapshot.merged_pr_count
+    external_merged_pr_count = snapshot.external_merged_pr_count
 
     thresholds = config.thresholds
     candidate_signals = (
@@ -67,11 +68,14 @@ def assess_repository(
             thresholds.recent_activity_partial_days,
         ),
         _merged_pr_signal(
-            merged_pr_count,
+            external_merged_pr_count if external_merged_pr_count is not None else merged_pr_count,
             days,
             thresholds.merged_prs_full,
             thresholds.merged_prs_partial,
             thresholds.merged_prs_minimum,
+            total_count=merged_pr_count if external_merged_pr_count is not None else None,
+            maintainer_count=snapshot.maintainer_merged_pr_count,
+            bot_count=snapshot.bot_merged_pr_count,
         ),
         _contribution_docs_signal(snapshot),
         _pr_template_signal(snapshot),
@@ -151,6 +155,10 @@ def _merged_pr_signal(
     full_count: int,
     partial_count: int,
     minimum_count: int,
+    *,
+    total_count: int | None = None,
+    maintainer_count: int | None = None,
+    bot_count: int | None = None,
 ) -> Signal:
     max_points = SIGNAL_WEIGHTS["Merged pull request activity"]
     if count >= full_count:
@@ -161,12 +169,14 @@ def _merged_pr_signal(
         points = _scaled_points(max_points, 0.40)
     else:
         points = 0
-    return Signal(
-        "Merged pull request activity",
-        points,
-        max_points,
-        f"{count} merged PRs in {days} days.",
-    )
+    if total_count is None:
+        detail = f"{count} merged PRs in {days} days."
+    else:
+        detail = (
+            f"{count} external human merged PRs, {maintainer_count or 0} maintainer PRs, "
+            f"{bot_count or 0} bot PRs in {days} days ({total_count} total merged PRs)."
+        )
+    return Signal("Merged pull request activity", points, max_points, detail)
 
 
 def _contribution_docs_signal(snapshot: RepositorySnapshot) -> Signal:

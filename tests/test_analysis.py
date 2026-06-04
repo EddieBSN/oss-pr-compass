@@ -213,6 +213,50 @@ def test_merged_pr_signal_uses_exact_lookback_count_when_available() -> None:
     assert signal.detail == "20 merged PRs in 90 days."
 
 
+def test_merged_pr_signal_does_not_count_maintainer_or_bot_prs_as_external() -> None:
+    snapshot = _snapshot_with_merged_pr_counts(
+        total=20,
+        external=0,
+        maintainer=12,
+        bot=8,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Merged pull request activity")
+    assert signal.points == 0
+    assert "0 external human merged PRs" in signal.detail
+    assert "12 maintainer PRs" in signal.detail
+    assert "8 bot PRs" in signal.detail
+    assert "20 total merged PRs" in signal.detail
+
+
+def test_merged_pr_signal_scores_mixed_external_maintainer_and_bot_counts() -> None:
+    snapshot = _snapshot_with_merged_pr_counts(
+        total=20,
+        external=5,
+        maintainer=10,
+        bot=5,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Merged pull request activity")
+    assert signal.points == 14
+    assert signal.max_points == 18
+    assert "5 external human merged PRs" in signal.detail
+    assert "10 maintainer PRs" in signal.detail
+    assert "5 bot PRs" in signal.detail
+
+
 def test_issue_signal_flags_stale_unanswered_issues() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/issues",
@@ -356,6 +400,35 @@ def _snapshot_with_root_entries(entries: frozenset[str]) -> RepositorySnapshot:
         workflow_entries=frozenset(),
         merged_prs=(),
         open_pr_count=0,
+    )
+
+
+def _snapshot_with_merged_pr_counts(
+    *,
+    total: int,
+    external: int,
+    maintainer: int,
+    bot: int,
+) -> RepositorySnapshot:
+    return RepositorySnapshot(
+        full_name="example/merged-prs",
+        html_url="https://github.com/example/merged-prs",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx=None,
+        topics=(),
+        root_entries=frozenset(),
+        workflow_entries=frozenset(),
+        merged_prs=(),
+        open_pr_count=0,
+        merged_pr_count=total,
+        external_merged_pr_count=external,
+        maintainer_merged_pr_count=maintainer,
+        bot_merged_pr_count=bot,
     )
 
 
