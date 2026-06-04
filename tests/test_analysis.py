@@ -183,6 +183,36 @@ def test_disabled_signal_reduces_max_score() -> None:
     assert assessment.verdict == "strong"
 
 
+def test_merged_pr_signal_uses_exact_lookback_count_when_available() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/search-count",
+        html_url="https://github.com/example/search-count",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx=None,
+        topics=(),
+        root_entries=frozenset(),
+        workflow_entries=frozenset(),
+        merged_prs=(),
+        merged_pr_count=20,
+        open_pr_count=0,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Merged pull request activity")
+    assert signal.points == signal.max_points
+    assert signal.detail == "20 merged PRs in 90 days."
+
+
 def test_issue_signal_flags_stale_unanswered_issues() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/issues",

@@ -160,7 +160,7 @@ def test_main_rejects_invalid_repository_before_api_paths(monkeypatch, capsys) -
         def __init__(self, *, token: str | None, api_url: str) -> None:
             pass
 
-        def fetch_snapshot(self, repository: str) -> object:
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> object:
             raise AssertionError("invalid repository input should fail before API paths are built")
 
     monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", InvalidInputClient)
@@ -178,7 +178,8 @@ def test_main_uses_canonical_repository_for_remote_config(monkeypatch, capsys) -
         def __init__(self, *, token: str | None, api_url: str) -> None:
             pass
 
-        def fetch_snapshot(self, repository: str) -> RepositorySnapshot:
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            assert merged_since is not None
             return RepositorySnapshot(
                 full_name="new/repo",
                 html_url="https://github.com/new/repo",
@@ -217,7 +218,7 @@ def test_main_reports_github_timeout(monkeypatch, capsys) -> None:
         def __init__(self, *, token: str | None, api_url: str) -> None:
             pass
 
-        def fetch_snapshot(self, repository: str) -> object:
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> object:
             raise GitHubError("GitHub API timed out for /repos/owner/repo: timed out")
 
     monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", TimeoutClient)

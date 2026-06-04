@@ -32,6 +32,7 @@ class RepositorySnapshot:
     workflow_entries: frozenset[str]
     merged_prs: tuple[dict[str, Any], ...]
     open_pr_count: int
+    merged_pr_count: int | None = None
     labels: tuple[str, ...] = ()
     open_issues: tuple[IssueSnapshot, ...] = ()
     open_issue_count: int | None = None
