@@ -371,6 +371,83 @@ def test_fetch_snapshot_tolerates_malformed_issue_labels() -> None:
     assert snapshot.open_issues[0].labels == ()
 
 
+def test_fetch_snapshot_rejects_non_string_issue_label_names() -> None:
+    client = OpenIssueSearchGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": 1,
+                "labels": [{"name": 123}],
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            }
+        ],
+    )
+
+    with pytest.raises(GitHubError, match=r"labels\[0\]\.name"):
+        client.fetch_snapshot("owner/repo")
+
+
+def test_fetch_snapshot_rejects_invalid_issue_numbers() -> None:
+    client = OpenIssueSearchGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": "not-a-number",
+                "labels": [],
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            }
+        ],
+    )
+
+    with pytest.raises(GitHubError, match=r"number"):
+        client.fetch_snapshot("owner/repo")
+
+
+def test_fetch_snapshot_rejects_timezone_naive_issue_timestamps() -> None:
+    client = OpenIssueSearchGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": 1,
+                "labels": [],
+                "created_at": "2026-06-01T00:00:00",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            }
+        ],
+    )
+
+    with pytest.raises(GitHubError, match="timezone-aware"):
+        client.fetch_snapshot("owner/repo")
+
+
+def test_fetch_snapshot_normalizes_github_timestamps_to_utc() -> None:
+    client = OpenIssueSearchGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": 1,
+                "labels": [],
+                "created_at": "2026-06-01T02:00:00+02:00",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            }
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.open_issues[0].created_at == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
 def test_fetch_snapshot_collects_pull_request_template_metadata() -> None:
     payloads = _base_payloads()
     payloads["/repos/owner/repo/contents/"] = [

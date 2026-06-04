@@ -256,3 +256,22 @@ def test_main_reports_github_timeout(monkeypatch, capsys) -> None:
 
     captured = capsys.readouterr()
     assert "error: GitHub API timed out for /repos/owner/repo: timed out" in captured.err
+
+
+def test_main_reports_malformed_github_payload_without_traceback(monkeypatch, capsys) -> None:
+    class MalformedPayloadClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> object:
+            raise GitHubError(
+                "Expected string for labels[0].name in open issues from /search/issues."
+            )
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", MalformedPayloadClient)
+
+    assert main(["owner/repo"]) == 2
+
+    captured = capsys.readouterr()
+    assert "error: Expected string for labels[0].name" in captured.err
+    assert "Traceback" not in captured.err

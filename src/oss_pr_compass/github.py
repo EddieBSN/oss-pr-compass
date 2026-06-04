@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from oss_pr_compass.model import IssueSnapshot, RepositorySnapshot
@@ -84,10 +84,12 @@ class GitHubClient:
         merged_since: datetime | None = None,
     ) -> RepositorySnapshot:
         owner, name = parse_repository(repository)
-        repo = self.get_json(f"/repos/{owner}/{name}")
+        repo_path = f"/repos/{owner}/{name}"
+        repo = self.get_json(repo_path)
         if not isinstance(repo, dict):
-            raise GitHubError(f"Expected repository object for /repos/{owner}/{name}.")
+            raise GitHubError(f"Expected repository object for {repo_path}.")
         owner, name = _canonical_repository(repo, requested_owner=owner, requested_name=name)
+        repo_path = f"/repos/{owner}/{name}"
 
         root_entries = set(self._content_names(owner, name, ""))
         github_entries = {
@@ -152,16 +154,17 @@ class GitHubClient:
         merged_prs = tuple(pr for pr in closed_prs if pr.get("merged_at"))
 
         return RepositorySnapshot(
-            full_name=repo["full_name"],
-            html_url=repo["html_url"],
-            description=repo.get("description") or "",
-            stars=int(repo.get("stargazers_count") or 0),
-            forks=int(repo.get("forks_count") or 0),
+            full_name=_required_string(repo.get("full_name"), repo_path, "full_name"),
+            html_url=_required_string(repo.get("html_url"), repo_path, "html_url"),
+            description=_optional_string(repo.get("description"), repo_path, "description") or "",
+            stars=_non_negative_int(repo.get("stargazers_count", 0), repo_path, "stargazers_count"),
+            forks=_non_negative_int(repo.get("forks_count", 0), repo_path, "forks_count"),
             archived=bool(repo.get("archived")),
-            pushed_at=parse_datetime(repo.get("pushed_at")),
-            default_branch=repo.get("default_branch") or "main",
-            license_spdx=(repo.get("license") or {}).get("spdx_id"),
-            topics=tuple(repo.get("topics") or ()),
+            pushed_at=_optional_aware_datetime(repo.get("pushed_at"), repo_path, "pushed_at"),
+            default_branch=_optional_string(repo.get("default_branch"), repo_path, "default_branch")
+            or "main",
+            license_spdx=_license_spdx_id(repo, repo_path),
+            topics=_string_tuple(repo.get("topics") or (), repo_path, "topics"),
             root_entries=frozenset(
                 root_entries | github_entries | docs_entries | pull_request_template_entries
             ),
@@ -173,13 +176,16 @@ class GitHubClient:
             maintainer_merged_pr_count=maintainer_merged_pr_count,
             bot_merged_pr_count=bot_merged_pr_count,
             draft_open_pr_count=draft_open_pr_count,
-            labels=tuple(
-                label["name"] for label in labels if isinstance(label, dict) and "name" in label
+            labels=_repository_label_names(labels, f"/repos/{owner}/{name}/labels"),
+            open_issues=_issue_snapshots(
+                open_issue_items,
+                issue_comment_activity,
+                "/search/issues",
             ),
-            open_issues=_issue_snapshots(open_issue_items, issue_comment_activity),
             oldest_open_issues=_issue_snapshots(
                 oldest_open_issue_items,
                 issue_comment_activity,
+                "/search/issues",
             ),
             open_issue_count=open_issue_count,
             issue_comment_evidence_incomplete=issue_comment_activity.incomplete,
@@ -343,11 +349,11 @@ class GitHubClient:
         incomplete = False
         seen_issue_numbers: set[int] = set()
         for issue in issue_items:
-            issue_number = int(issue.get("number") or 0)
+            issue_number = _non_negative_int(issue.get("number"), "/search/issues", "number")
             if issue_number <= 0 or issue_number in seen_issue_numbers:
                 continue
             seen_issue_numbers.add(issue_number)
-            if int(issue.get("comments") or 0) <= 0:
+            if _non_negative_int(issue.get("comments", 0), "/search/issues", "comments") <= 0:
                 continue
 
             issue_comments = self._issue_comments(owner, name, issue_number)
@@ -357,8 +363,20 @@ class GitHubClient:
                 if comment_issue_number is not None and comment_issue_number != issue_number:
                     continue
 
-                association = str(comment.get("author_association") or "").upper()
-                updated_at = parse_datetime(comment.get("updated_at") or comment.get("created_at"))
+                comments_path = f"/repos/{owner}/{name}/issues/{issue_number}/comments"
+                association = (
+                    _optional_string(
+                        comment.get("author_association"),
+                        comments_path,
+                        "author_association",
+                    )
+                    or ""
+                ).upper()
+                updated_at = _optional_aware_datetime(
+                    comment.get("updated_at") or comment.get("created_at"),
+                    comments_path,
+                    "updated_at",
+                )
                 if updated_at is None:
                     continue
                 latest = (
@@ -571,9 +589,68 @@ def parse_repository(value: str) -> tuple[str, str]:
 
 
 def parse_datetime(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
+    return _optional_aware_datetime(value, "GitHub datetime", "value")
+
+
+def _required_string(value: object, path: str, field: str) -> str:
+    if isinstance(value, str) and value:
+        return value
+    raise GitHubError(f"Expected string for {field} in {path}.")
+
+
+def _optional_string(value: object, path: str, field: str) -> str | None:
+    if value is None:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if isinstance(value, str):
+        return value
+    raise GitHubError(f"Expected string or null for {field} in {path}.")
+
+
+def _non_negative_int(value: object, path: str, field: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    raise GitHubError(f"Expected non-negative integer for {field} in {path}.")
+
+
+def _optional_aware_datetime(value: object, path: str, field: str) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise GitHubError(f"Expected string or null for {field} in {path}.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise GitHubError(f"Expected ISO 8601 datetime for {field} in {path}.") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise GitHubError(f"Expected timezone-aware datetime for {field} in {path}.")
+    return parsed.astimezone(timezone.utc)
+
+
+def _string_tuple(value: object, path: str, field: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise GitHubError(f"Expected list of strings for {field} in {path}.")
+    result = []
+    for index, item in enumerate(value):
+        result.append(_required_string(item, path, f"{field}[{index}]"))
+    return tuple(result)
+
+
+def _repository_label_names(labels: list[dict[str, Any]], path: str) -> tuple[str, ...]:
+    names = []
+    for index, label in enumerate(labels):
+        if "name" not in label:
+            continue
+        names.append(_required_string(label["name"], path, f"labels[{index}].name"))
+    return tuple(names)
+
+
+def _license_spdx_id(repo: dict[str, Any], path: str) -> str | None:
+    license_payload = repo.get("license")
+    if license_payload is None:
+        return None
+    if not isinstance(license_payload, dict):
+        raise GitHubError(f"Expected object or null for license in {path}.")
+    return _optional_string(license_payload.get("spdx_id"), path, "license.spdx_id")
 
 
 def _parse_repository_path(value: str) -> tuple[str, str]:
@@ -616,20 +693,41 @@ def _issue_number_from_url(value: object) -> int | None:
 def _issue_snapshots(
     items: list[dict[str, Any]],
     issue_comment_activity: IssueCommentActivity,
+    path: str,
 ) -> tuple[IssueSnapshot, ...]:
     snapshots: list[IssueSnapshot] = []
-    for issue in items:
-        number = int(issue.get("number") or 0)
-        created_at = parse_datetime(issue.get("created_at"))
-        author_association = str(issue.get("author_association") or "")
+    for index, issue in enumerate(items):
+        field_prefix = f"items[{index}]"
+        number = _non_negative_int(issue.get("number"), path, f"{field_prefix}.number")
+        created_at = _optional_aware_datetime(
+            issue.get("created_at"),
+            path,
+            f"{field_prefix}.created_at",
+        )
+        author_association = (
+            _optional_string(
+                issue.get("author_association"),
+                path,
+                f"{field_prefix}.author_association",
+            )
+            or ""
+        )
         latest_external_comment_at = issue_comment_activity.latest_external.get(number)
         snapshots.append(
             IssueSnapshot(
                 number=number,
-                labels=_issue_label_names(issue),
+                labels=_issue_label_names(issue, path, f"{field_prefix}.labels"),
                 created_at=created_at,
-                updated_at=parse_datetime(issue.get("updated_at")),
-                comment_count=int(issue.get("comments") or 0),
+                updated_at=_optional_aware_datetime(
+                    issue.get("updated_at"),
+                    path,
+                    f"{field_prefix}.updated_at",
+                ),
+                comment_count=_non_negative_int(
+                    issue.get("comments", 0),
+                    path,
+                    f"{field_prefix}.comments",
+                ),
                 author_association=author_association,
                 latest_maintainer_comment_at=issue_comment_activity.latest_maintainer.get(number),
                 latest_external_activity_at=_latest_external_activity_at(
@@ -655,11 +753,16 @@ def _latest_external_activity_at(
     return max(candidates) if candidates else None
 
 
-def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
+def _issue_label_names(issue: dict[str, Any], path: str, field: str) -> tuple[str, ...]:
     labels = issue.get("labels", [])
     if not isinstance(labels, list):
         return ()
-    return tuple(label["name"] for label in labels if isinstance(label, dict) and "name" in label)
+    names = []
+    for index, label in enumerate(labels):
+        if not isinstance(label, dict) or "name" not in label:
+            continue
+        names.append(_required_string(label["name"], path, f"{field}[{index}].name"))
+    return tuple(names)
 
 
 def _is_bot_user(value: object) -> bool:
