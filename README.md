@@ -150,8 +150,10 @@ classification within the bounded page limit, `oss-pr-compass` exits with a GitH
 totals as exact. Idempotent GitHub GET requests retry transient network failures, HTTP 502/503/504 responses, and short
 `Retry-After` windows for 429 or secondary-rate-limit 403 responses.
 Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories.
-Issue triage quality samples recently updated open issues and comments; large repositories, or repositories where the
-issue sample is smaller than the total issue count, are marked with sampled confidence metadata.
+Issue triage quality samples recently updated open issues, then fetches bounded issue-specific comments for each
+sampled issue so maintainer response and stale-unanswered evidence is tied to the inspected issues. Large repositories,
+repositories where the issue sample is smaller than the total issue count, or sampled issues whose comment pagination is
+capped are marked with sampled or incomplete confidence metadata.
 
 ## Scoring Configuration
 

@@ -348,15 +348,22 @@ def _issue_triage_signal(
             f"labeled; {total_issue_count} total open issues; "
             f"{stale_detail}; {len(recent_maintainer_responses)} recent maintainer responses."
         )
+    if snapshot.issue_comment_evidence_incomplete:
+        detail = f"{detail.rstrip('.')}; issue comment evidence incomplete."
     sampled = snapshot.open_issue_count is not None and (
         total_issue_count > sampled_issue_count or total_issue_count > stale_sampled_issue_count
     )
+    confidence = "high"
+    if snapshot.issue_comment_evidence_incomplete:
+        confidence = "incomplete"
+    elif sampled:
+        confidence = "sampled"
     return Signal(
         "Issue triage signals",
         points,
         max_points,
         detail,
-        confidence="sampled" if sampled else "high",
+        confidence=confidence,
         sampled=sampled,
         sample_size=sampled_issue_count if sampled else None,
         sample_total=total_issue_count if sampled else None,

@@ -89,7 +89,6 @@ def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> 
         "/repos/new/repo/labels",
         "/search/issues",
         "/search/issues",
-        "/repos/new/repo/issues/comments",
         "/search/issues",
         "/search/issues",
     ]
@@ -209,7 +208,7 @@ def test_fetch_snapshot_collects_oldest_open_issue_sample_for_stale_detection() 
 
 def test_fetch_snapshot_records_latest_external_issue_activity() -> None:
     payloads = _base_payloads()
-    payloads["/repos/owner/repo/issues/comments"] = [
+    payloads["/repos/owner/repo/issues/401/comments"] = [
         {
             "issue_url": "https://api.github.com/repos/owner/repo/issues/401",
             "author_association": "MEMBER",
@@ -245,6 +244,87 @@ def test_fetch_snapshot_records_latest_external_issue_activity() -> None:
     assert snapshot.open_issues[0].latest_external_activity_at == datetime(
         2026, 3, 10, tzinfo=timezone.utc
     )
+
+
+def test_fetch_snapshot_uses_issue_specific_comments_for_sampled_issue_activity() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/issues/501/comments"] = [
+        {
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/501",
+            "author_association": "MEMBER",
+            "created_at": "2026-05-15T00:00:00Z",
+            "updated_at": "2026-05-15T00:00:00Z",
+        }
+    ]
+    client = OpenIssueSearchGitHubClient(
+        payloads,
+        issue_items=[
+            {
+                "number": 501,
+                "labels": [{"name": "bug"}],
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-15T00:00:00Z",
+                "comments": 1,
+                "author_association": "CONTRIBUTOR",
+            },
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.open_issues[0].latest_maintainer_comment_at == datetime(
+        2026, 5, 15, tzinfo=timezone.utc
+    )
+
+
+def test_fetch_snapshot_marks_issue_comment_evidence_incomplete_when_comments_are_capped() -> None:
+    client = CappedIssueCommentsGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": 601,
+                "labels": [{"name": "bug"}],
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-15T00:00:00Z",
+                "comments": 301,
+                "author_association": "CONTRIBUTOR",
+            },
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.issue_comment_evidence_incomplete is True
+
+
+def test_fetch_snapshot_does_not_use_repository_wide_comments_for_sampled_issue_response() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/issues/comments"] = [
+        {
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/701",
+            "author_association": "MEMBER",
+            "created_at": "2026-05-15T00:00:00Z",
+            "updated_at": "2026-05-15T00:00:00Z",
+        }
+    ]
+    payloads["/repos/owner/repo/issues/701/comments"] = []
+    client = OpenIssueSearchGitHubClient(
+        payloads,
+        issue_items=[
+            {
+                "number": 701,
+                "labels": [{"name": "bug"}],
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-15T00:00:00Z",
+                "comments": 1,
+                "author_association": "CONTRIBUTOR",
+            },
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.open_issues[0].latest_maintainer_comment_at is None
 
 
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
@@ -585,6 +665,15 @@ def _http_error(
     )
 
 
+def _issue_comment(author_association: str, updated_at: str) -> dict[str, str]:
+    return {
+        "issue_url": "https://api.github.com/repos/owner/repo/issues/601",
+        "author_association": author_association,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+    }
+
+
 class FakeGitHubClient(GitHubClient):
     def __init__(self, payloads: dict[str, object]):
         super().__init__(api_url="https://api.example.test")
@@ -614,6 +703,8 @@ class FakeGitHubClient(GitHubClient):
             if "type:issue" in query:
                 return {"total_count": 456, "incomplete_results": False, "items": []}
             raise AssertionError(f"unexpected search query: {query}")
+        if "/issues/" in path and path.endswith("/comments"):
+            return self.payloads.get(path, [])
         return self.payloads[path]
 
     def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
@@ -698,6 +789,35 @@ class OpenIssueSearchGitHubClient(RecordingGitHubClient):
                 "items": self.issue_items,
             }
         return super().get_json(path, params)
+
+
+class CappedIssueCommentsGitHubClient(OpenIssueSearchGitHubClient):
+    def get_json_response(self, path: str, params: dict[str, str] | None = None) -> GitHubResponse:
+        if path == "/repos/owner/repo/issues/601/comments":
+            return GitHubResponse(
+                [_issue_comment("CONTRIBUTOR", "2026-05-02T00:00:00Z")],
+                {
+                    "link": (
+                        "<https://api.example.test/repos/owner/repo/issues/601/comments?page=2>; "
+                        'rel="next"'
+                    )
+                },
+            )
+        return super().get_json_response(path, params)
+
+    def _request_json_url(self, url: str, display_path: str) -> GitHubResponse:
+        page = int(url.rsplit("page=", 1)[-1])
+        headers = {}
+        if page <= 3:
+            next_page = page + 1
+            headers = {
+                "link": (
+                    "<https://api.example.test/repos/owner/repo/issues/601/comments"
+                    f"?page={next_page}>; "
+                    'rel="next"'
+                )
+            }
+        return GitHubResponse([_issue_comment("CONTRIBUTOR", "2026-05-02T00:00:00Z")], headers)
 
 
 class OrderedIssueSearchGitHubClient(FakeGitHubClient):

@@ -56,6 +56,13 @@ class MergedPullRequestCounts:
 class IssueCommentActivity:
     latest_maintainer: dict[int, datetime]
     latest_external: dict[int, datetime]
+    incomplete: bool = False
+
+
+@dataclass(frozen=True)
+class IssueCommentsResult:
+    comments: list[dict[str, Any]]
+    truncated: bool
 
 
 class GitHubClient:
@@ -122,7 +129,11 @@ class GitHubClient:
         )
         open_issue_count, open_issue_items = self._open_issue_items(owner, name, order="desc")
         _, oldest_open_issue_items = self._open_issue_items(owner, name, order="asc")
-        issue_comment_activity = self._issue_comment_activity(owner, name)
+        issue_comment_activity = self._sampled_issue_comment_activity(
+            owner,
+            name,
+            open_issue_items + oldest_open_issue_items,
+        )
         open_pr_count = self._search_issue_count(
             owner,
             name,
@@ -171,6 +182,7 @@ class GitHubClient:
                 issue_comment_activity,
             ),
             open_issue_count=open_issue_count,
+            issue_comment_evidence_incomplete=issue_comment_activity.incomplete,
         )
 
     def fetch_file_text(self, repository: str, path: str) -> str | None:
@@ -320,39 +332,75 @@ class GitHubClient:
             )
         return entries
 
-    def _issue_comment_activity(self, owner: str, name: str) -> IssueCommentActivity:
-        comments = self._get_list(
-            f"/repos/{owner}/{name}/issues/comments",
-            {
-                "sort": "updated",
-                "direction": "desc",
-                "per_page": "100",
-            },
-            "issue comments",
-            max_pages=ISSUE_COMMENT_PAGE_LIMIT,
-            allow_truncated=True,
-        )
+    def _sampled_issue_comment_activity(
+        self,
+        owner: str,
+        name: str,
+        issue_items: list[dict[str, Any]],
+    ) -> IssueCommentActivity:
         latest_maintainer: dict[int, datetime] = {}
         latest_external: dict[int, datetime] = {}
-        for comment in comments:
-            association = str(comment.get("author_association") or "").upper()
-            issue_number = _issue_number_from_url(comment.get("issue_url"))
-            if issue_number is None:
+        incomplete = False
+        seen_issue_numbers: set[int] = set()
+        for issue in issue_items:
+            issue_number = int(issue.get("number") or 0)
+            if issue_number <= 0 or issue_number in seen_issue_numbers:
+                continue
+            seen_issue_numbers.add(issue_number)
+            if int(issue.get("comments") or 0) <= 0:
                 continue
 
-            updated_at = parse_datetime(comment.get("updated_at") or comment.get("created_at"))
-            if updated_at is None:
-                continue
-            latest = (
-                latest_maintainer if association in MAINTAINER_ASSOCIATIONS else latest_external
-            )
-            current = latest.get(issue_number)
-            if current is None or updated_at > current:
-                latest[issue_number] = updated_at
+            issue_comments = self._issue_comments(owner, name, issue_number)
+            incomplete = incomplete or issue_comments.truncated
+            for comment in issue_comments.comments:
+                comment_issue_number = _issue_number_from_url(comment.get("issue_url"))
+                if comment_issue_number is not None and comment_issue_number != issue_number:
+                    continue
+
+                association = str(comment.get("author_association") or "").upper()
+                updated_at = parse_datetime(comment.get("updated_at") or comment.get("created_at"))
+                if updated_at is None:
+                    continue
+                latest = (
+                    latest_maintainer if association in MAINTAINER_ASSOCIATIONS else latest_external
+                )
+                current = latest.get(issue_number)
+                if current is None or updated_at > current:
+                    latest[issue_number] = updated_at
         return IssueCommentActivity(
             latest_maintainer=latest_maintainer,
             latest_external=latest_external,
+            incomplete=incomplete,
         )
+
+    def _issue_comments(self, owner: str, name: str, issue_number: int) -> IssueCommentsResult:
+        path = f"/repos/{owner}/{name}/issues/{issue_number}/comments"
+        comments: list[dict[str, Any]] = []
+        response = self.get_json_response(path, {"per_page": "100"})
+        page = 1
+
+        while True:
+            comments.extend(
+                _validate_list_payload(
+                    response.payload,
+                    path,
+                    f"comments for issue #{issue_number}",
+                )
+            )
+
+            next_url = _next_link(response.headers)
+            if next_url is None:
+                return IssueCommentsResult(comments=comments, truncated=False)
+            if page >= ISSUE_COMMENT_PAGE_LIMIT:
+                return IssueCommentsResult(comments=comments, truncated=True)
+
+            page += 1
+            if _url_origin(next_url) != self._api_origin:
+                raise GitHubError(
+                    "Refusing to follow off-origin GitHub issue comment pagination "
+                    f"link for issue #{issue_number}."
+                )
+            response = self._request_json_url(next_url, path)
 
     def _search_issue_count(
         self,
