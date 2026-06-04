@@ -347,6 +347,41 @@ def test_issue_signal_uses_total_open_issue_count_for_queue_pressure() -> None:
     assert issue_signal.confidence == "sampled"
 
 
+def test_issue_signal_does_not_treat_missing_sample_as_healthy_triage() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/missing-issue-sample",
+        html_url="https://github.com/example/missing-issue-sample",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(),
+        open_issue_count=25,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points < issue_signal.max_points
+    assert issue_signal.confidence == "sampled"
+    assert issue_signal.sample_size == 0
+    assert issue_signal.sample_total == 25
+    assert "0 sampled open issues available from 25 total open issues" in issue_signal.detail
+
+
 def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/drafts",

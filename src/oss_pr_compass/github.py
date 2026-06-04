@@ -114,22 +114,7 @@ class GitHubClient:
             max_pages=REPOSITORY_LABEL_PAGE_LIMIT,
             allow_truncated=True,
         )
-        open_issue_items = [
-            issue
-            for issue in self._get_list(
-                f"/repos/{owner}/{name}/issues",
-                {
-                    "state": "open",
-                    "sort": "updated",
-                    "direction": "desc",
-                    "per_page": "100",
-                },
-                "open issues",
-                max_pages=OPEN_ISSUE_SAMPLE_PAGE_LIMIT,
-                allow_truncated=True,
-            )
-            if "pull_request" not in issue
-        ]
+        open_issue_count, open_issue_items = self._open_issue_items(owner, name)
         latest_maintainer_comments = self._latest_maintainer_issue_comments(owner, name)
         open_pr_count = self._search_issue_count(
             owner,
@@ -145,7 +130,6 @@ class GitHubClient:
             extra_qualifiers=("draft:true",),
             description="draft open PRs",
         )
-        open_issue_count = self._search_issue_count(owner, name, "issue")
 
         merged_prs = tuple(pr for pr in closed_prs if pr.get("merged_at"))
 
@@ -397,6 +381,16 @@ class GitHubClient:
             )
         return int(payload["total_count"])
 
+    def _open_issue_items(self, owner: str, name: str) -> tuple[int, list[dict[str, Any]]]:
+        total_count, items = self._search_issue_items(
+            f"repo:{owner}/{name} type:issue state:open",
+            "open issues",
+            max_pages=OPEN_ISSUE_SAMPLE_PAGE_LIMIT,
+            allow_truncated=True,
+            extra_params={"sort": "updated", "order": "desc"},
+        )
+        return total_count, [item for item in items if "pull_request" not in item]
+
     def _merged_pull_request_counts(
         self, owner: str, name: str, merged_since: datetime
     ) -> MergedPullRequestCounts:
@@ -436,17 +430,22 @@ class GitHubClient:
         description: str,
         *,
         max_pages: int,
+        allow_truncated: bool = False,
+        extra_params: dict[str, str] | None = None,
     ) -> tuple[int, list[dict[str, Any]]]:
         if max_pages <= 0:
             raise ValueError("max_pages must be greater than zero")
 
         items: list[dict[str, Any]] = []
+        params = {
+            "q": query,
+            "per_page": "100",
+        }
+        if extra_params:
+            params.update(extra_params)
         response = self.get_json_response(
             "/search/issues",
-            {
-                "q": query,
-                "per_page": "100",
-            },
+            params,
         )
         page = 1
         total_count: int | None = None
@@ -473,6 +472,8 @@ class GitHubClient:
             if len(items) >= total_count:
                 return total_count, items[:total_count]
             if page >= max_pages:
+                if allow_truncated:
+                    return total_count, items
                 raise GitHubError(
                     f"GitHub Search pagination for {description} exceeded {max_pages} pages."
                 )

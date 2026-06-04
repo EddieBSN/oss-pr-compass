@@ -141,13 +141,14 @@ GitHub API collection follows Link-header pagination with endpoint-specific caps
 Merged PR activity, open PR queues, and open issue queues come from GitHub Search. Merged PR activity uses a
 lookback-bound `is:merged merged:>=...` query instead of capped recently updated closed PR pages, then classifies
 merged PR authors as external human, maintainer, or bot/app before scoring. Open PR queue pressure uses `draft:false`
-for ready-for-review PRs and separately reports `draft:true` PRs. If GitHub Search reports incomplete count results or
-cannot return the merged PR items needed for classification within the bounded page limit, `oss-pr-compass` exits with a
-GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests retry transient network
-failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or secondary-rate-limit 403 responses.
-Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories.
-Issue triage quality samples recently updated open issues and comments; large repositories are marked with sampled
-confidence metadata when the total issue count exceeds the inspected sample.
+for ready-for-review PRs and separately reports `draft:true` PRs. Issue triage samples use `type:issue` Search so PRs
+cannot crowd actual issues out of the inspected sample. If GitHub Search reports incomplete count results or cannot
+return the merged PR items needed for classification within the bounded page limit, `oss-pr-compass` exits with a GitHub
+API error instead of treating those totals as exact. Idempotent GitHub GET requests retry transient network failures,
+HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or secondary-rate-limit 403 responses. Pull request
+template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories. Issue triage
+quality samples recently updated open issues and comments; large repositories, or repositories where the issue sample is
+smaller than the total issue count, are marked with sampled confidence metadata.
 
 ## Scoring Configuration
 

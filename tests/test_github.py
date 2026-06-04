@@ -87,16 +87,15 @@ def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> 
         "/repos/new/repo/contents/.github/workflows",
         "/repos/new/repo/pulls",
         "/repos/new/repo/labels",
-        "/repos/new/repo/issues",
-        "/repos/new/repo/issues/comments",
         "/search/issues",
+        "/repos/new/repo/issues/comments",
         "/search/issues",
         "/search/issues",
     ]
     assert client.search_queries == [
+        "repo:new/repo type:issue state:open",
         "repo:new/repo type:pr state:open draft:false",
         "repo:new/repo type:pr state:open draft:true",
-        "repo:new/repo type:issue state:open",
     ]
 
 
@@ -160,6 +159,41 @@ def test_fetch_snapshot_counts_ready_for_review_prs_separately_from_drafts() -> 
     assert "repo:owner/repo type:pr state:open draft:true" in client.search_queries
 
 
+def test_fetch_snapshot_samples_actual_issues_with_issue_search() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/issues"] = [
+        {"number": 101, "pull_request": {"url": "https://api.example.test/pulls/101"}}
+    ]
+    client = OpenIssueSearchGitHubClient(
+        payloads,
+        issue_items=[
+            {
+                "number": 201,
+                "labels": [{"name": "bug"}],
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 1,
+                "author_association": "CONTRIBUTOR",
+            },
+            {
+                "number": 202,
+                "labels": [{"name": "help wanted"}],
+                "created_at": "2026-05-02T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            },
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert [issue.number for issue in snapshot.open_issues] == [201, 202]
+    assert snapshot.open_issue_count == 2
+    assert "/repos/owner/repo/issues" not in client.paths
+    assert "repo:owner/repo type:issue state:open" in client.search_queries
+
+
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
     client = IncompleteSearchGitHubClient(_base_payloads())
 
@@ -177,28 +211,27 @@ def test_fetch_snapshot_rejects_incomplete_merged_pr_search_counts() -> None:
         )
 
 
-def test_fetch_snapshot_rejects_malformed_list_payloads() -> None:
-    payloads = _base_payloads()
-    payloads["/repos/owner/repo/issues"] = {"message": "not a list"}
-    client = FakeGitHubClient(payloads)
+def test_fetch_snapshot_rejects_malformed_open_issue_search_items() -> None:
+    client = MalformedOpenIssueSearchGitHubClient(_base_payloads())
 
-    with pytest.raises(GitHubError, match="Expected a list for open issues"):
+    with pytest.raises(GitHubError, match="Expected search items for open issues"):
         client.fetch_snapshot("owner/repo")
 
 
 def test_fetch_snapshot_tolerates_malformed_issue_labels() -> None:
-    payloads = _base_payloads()
-    payloads["/repos/owner/repo/issues"] = [
-        {
-            "number": 1,
-            "labels": None,
-            "created_at": "2026-06-01T00:00:00Z",
-            "updated_at": "2026-06-01T00:00:00Z",
-            "comments": 0,
-            "author_association": "CONTRIBUTOR",
-        }
-    ]
-    client = FakeGitHubClient(payloads)
+    client = OpenIssueSearchGitHubClient(
+        _base_payloads(),
+        issue_items=[
+            {
+                "number": 1,
+                "labels": None,
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "comments": 0,
+                "author_association": "CONTRIBUTOR",
+            }
+        ],
+    )
 
     snapshot = client.fetch_snapshot("owner/repo")
 
@@ -526,7 +559,7 @@ class FakeGitHubClient(GitHubClient):
             if "type:pr" in query:
                 return {"total_count": 123}
             if "type:issue" in query:
-                return {"total_count": 456}
+                return {"total_count": 456, "incomplete_results": False, "items": []}
             raise AssertionError(f"unexpected search query: {query}")
         return self.payloads[path]
 
@@ -593,6 +626,36 @@ class DraftPullRequestSearchGitHubClient(FakeGitHubClient):
                 return {"total_count": self.ready_count}
             if "type:pr" in query and "draft:true" in query:
                 return {"total_count": self.draft_count}
+        return super().get_json(path, params)
+
+
+class OpenIssueSearchGitHubClient(RecordingGitHubClient):
+    def __init__(self, payloads: dict[str, object], *, issue_items: list[dict[str, object]]):
+        super().__init__(payloads)
+        self.issue_items = issue_items
+
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        query = (params or {}).get("q", "")
+        if path == "/search/issues" and "type:issue" in query:
+            self.paths.append(path)
+            self.search_queries.append(query)
+            return {
+                "total_count": len(self.issue_items),
+                "incomplete_results": False,
+                "items": self.issue_items,
+            }
+        return super().get_json(path, params)
+
+
+class MalformedOpenIssueSearchGitHubClient(FakeGitHubClient):
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        query = (params or {}).get("q", "")
+        if path == "/search/issues" and "type:issue" in query:
+            return {
+                "total_count": 1,
+                "incomplete_results": False,
+                "items": {"message": "not a list"},
+            }
         return super().get_json(path, params)
 
 
