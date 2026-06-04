@@ -207,6 +207,46 @@ def test_fetch_snapshot_collects_oldest_open_issue_sample_for_stale_detection() 
     assert ("repo:owner/repo type:issue state:open", "updated", "asc") in client.search_params
 
 
+def test_fetch_snapshot_records_latest_external_issue_activity() -> None:
+    payloads = _base_payloads()
+    payloads["/repos/owner/repo/issues/comments"] = [
+        {
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/401",
+            "author_association": "MEMBER",
+            "created_at": "2026-02-15T00:00:00Z",
+            "updated_at": "2026-02-15T00:00:00Z",
+        },
+        {
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/401",
+            "author_association": "CONTRIBUTOR",
+            "created_at": "2026-03-10T00:00:00Z",
+            "updated_at": "2026-03-10T00:00:00Z",
+        },
+    ]
+    client = OpenIssueSearchGitHubClient(
+        payloads,
+        issue_items=[
+            {
+                "number": 401,
+                "labels": [{"name": "bug"}],
+                "created_at": "2026-02-01T00:00:00Z",
+                "updated_at": "2026-03-10T00:00:00Z",
+                "comments": 2,
+                "author_association": "CONTRIBUTOR",
+            },
+        ],
+    )
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.open_issues[0].latest_maintainer_comment_at == datetime(
+        2026, 2, 15, tzinfo=timezone.utc
+    )
+    assert snapshot.open_issues[0].latest_external_activity_at == datetime(
+        2026, 3, 10, tzinfo=timezone.utc
+    )
+
+
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
     client = IncompleteSearchGitHubClient(_base_payloads())
 

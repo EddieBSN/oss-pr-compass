@@ -52,6 +52,12 @@ class MergedPullRequestCounts:
     bot: int
 
 
+@dataclass(frozen=True)
+class IssueCommentActivity:
+    latest_maintainer: dict[int, datetime]
+    latest_external: dict[int, datetime]
+
+
 class GitHubClient:
     def __init__(
         self,
@@ -116,7 +122,7 @@ class GitHubClient:
         )
         open_issue_count, open_issue_items = self._open_issue_items(owner, name, order="desc")
         _, oldest_open_issue_items = self._open_issue_items(owner, name, order="asc")
-        latest_maintainer_comments = self._latest_maintainer_issue_comments(owner, name)
+        issue_comment_activity = self._issue_comment_activity(owner, name)
         open_pr_count = self._search_issue_count(
             owner,
             name,
@@ -159,10 +165,10 @@ class GitHubClient:
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
-            open_issues=_issue_snapshots(open_issue_items, latest_maintainer_comments),
+            open_issues=_issue_snapshots(open_issue_items, issue_comment_activity),
             oldest_open_issues=_issue_snapshots(
                 oldest_open_issue_items,
-                latest_maintainer_comments,
+                issue_comment_activity,
             ),
             open_issue_count=open_issue_count,
         )
@@ -314,7 +320,7 @@ class GitHubClient:
             )
         return entries
 
-    def _latest_maintainer_issue_comments(self, owner: str, name: str) -> dict[int, datetime]:
+    def _issue_comment_activity(self, owner: str, name: str) -> IssueCommentActivity:
         comments = self._get_list(
             f"/repos/{owner}/{name}/issues/comments",
             {
@@ -326,12 +332,10 @@ class GitHubClient:
             max_pages=ISSUE_COMMENT_PAGE_LIMIT,
             allow_truncated=True,
         )
-        latest: dict[int, datetime] = {}
+        latest_maintainer: dict[int, datetime] = {}
+        latest_external: dict[int, datetime] = {}
         for comment in comments:
             association = str(comment.get("author_association") or "").upper()
-            if association not in MAINTAINER_ASSOCIATIONS:
-                continue
-
             issue_number = _issue_number_from_url(comment.get("issue_url"))
             if issue_number is None:
                 continue
@@ -339,10 +343,16 @@ class GitHubClient:
             updated_at = parse_datetime(comment.get("updated_at") or comment.get("created_at"))
             if updated_at is None:
                 continue
+            latest = (
+                latest_maintainer if association in MAINTAINER_ASSOCIATIONS else latest_external
+            )
             current = latest.get(issue_number)
             if current is None or updated_at > current:
                 latest[issue_number] = updated_at
-        return latest
+        return IssueCommentActivity(
+            latest_maintainer=latest_maintainer,
+            latest_external=latest_external,
+        )
 
     def _search_issue_count(
         self,
@@ -557,22 +567,44 @@ def _issue_number_from_url(value: object) -> int | None:
 
 def _issue_snapshots(
     items: list[dict[str, Any]],
-    latest_maintainer_comments: dict[int, datetime],
+    issue_comment_activity: IssueCommentActivity,
 ) -> tuple[IssueSnapshot, ...]:
-    return tuple(
-        IssueSnapshot(
-            number=int(issue.get("number") or 0),
-            labels=_issue_label_names(issue),
-            created_at=parse_datetime(issue.get("created_at")),
-            updated_at=parse_datetime(issue.get("updated_at")),
-            comment_count=int(issue.get("comments") or 0),
-            author_association=str(issue.get("author_association") or ""),
-            latest_maintainer_comment_at=latest_maintainer_comments.get(
-                int(issue.get("number") or 0)
-            ),
+    snapshots: list[IssueSnapshot] = []
+    for issue in items:
+        number = int(issue.get("number") or 0)
+        created_at = parse_datetime(issue.get("created_at"))
+        author_association = str(issue.get("author_association") or "")
+        latest_external_comment_at = issue_comment_activity.latest_external.get(number)
+        snapshots.append(
+            IssueSnapshot(
+                number=number,
+                labels=_issue_label_names(issue),
+                created_at=created_at,
+                updated_at=parse_datetime(issue.get("updated_at")),
+                comment_count=int(issue.get("comments") or 0),
+                author_association=author_association,
+                latest_maintainer_comment_at=issue_comment_activity.latest_maintainer.get(number),
+                latest_external_activity_at=_latest_external_activity_at(
+                    created_at,
+                    author_association,
+                    latest_external_comment_at,
+                ),
+            )
         )
-        for issue in items
-    )
+    return tuple(snapshots)
+
+
+def _latest_external_activity_at(
+    created_at: datetime | None,
+    author_association: str,
+    latest_external_comment_at: datetime | None,
+) -> datetime | None:
+    candidates = []
+    if author_association.upper() not in MAINTAINER_ASSOCIATIONS and created_at is not None:
+        candidates.append(created_at)
+    if latest_external_comment_at is not None:
+        candidates.append(latest_external_comment_at)
+    return max(candidates) if candidates else None
 
 
 def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
