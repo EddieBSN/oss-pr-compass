@@ -118,6 +118,35 @@ def test_format_markdown_includes_sampling_and_recommendation_details() -> None:
     assert "| low | Issue triage signals | 2 | Keep stale unanswered issues triaged." in output
 
 
+def test_format_outputs_include_no_data_issue_triage_confidence() -> None:
+    assessment = Assessment(
+        repository="owner/repo",
+        url="https://github.com/owner/repo",
+        score=76,
+        max_score=100,
+        verdict="strong",
+        signals=(
+            Signal(
+                "Issue triage signals",
+                7,
+                12,
+                "contributor labels: good first issue; no open issues; "
+                "label coverage and maintainer response evidence unavailable.",
+                confidence="no-data",
+            ),
+        ),
+        recommendations=(),
+    )
+
+    text = format_assessment(assessment)
+    markdown = format_markdown(assessment)
+
+    assert "confidence: no-data" in text
+    assert "no open issues" in text
+    assert "confidence: no-data" in markdown
+    assert "no open issues" in markdown
+
+
 def test_policy_failure_reason_checks_score_and_verdict() -> None:
     assessment = Assessment(
         repository="owner/repo",

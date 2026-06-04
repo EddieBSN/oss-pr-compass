@@ -153,7 +153,9 @@ Pull request template detection covers root, `docs/`, `.github/`, and supported 
 Issue triage quality samples recently updated open issues, then fetches bounded issue-specific comments for each
 sampled issue so maintainer response and stale-unanswered evidence is tied to the inspected issues. Large repositories,
 repositories where the issue sample is smaller than the total issue count, or sampled issues whose comment pagination is
-capped are marked with sampled or incomplete confidence metadata.
+capped are marked with sampled or incomplete confidence metadata. Repositories with no open issues can receive objective
+queue and stale-unanswered credit, but sample-dependent label coverage and maintainer response evidence is reported as
+no-data instead of full triage health.
 
 ## Scoring Configuration
 
