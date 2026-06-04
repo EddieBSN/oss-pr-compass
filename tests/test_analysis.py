@@ -382,6 +382,50 @@ def test_issue_signal_does_not_treat_missing_sample_as_healthy_triage() -> None:
     assert "0 sampled open issues available from 25 total open issues" in issue_signal.detail
 
 
+def test_issue_signal_does_not_treat_no_open_issues_as_full_triage_evidence() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/no-open-issues",
+        html_url="https://github.com/example/no-open-issues",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(),
+        open_issue_count=0,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points == 7
+    assert issue_signal.points < issue_signal.max_points
+    assert issue_signal.confidence == "no-data"
+    assert "no open issues" in issue_signal.detail
+    assert "label coverage and maintainer response evidence unavailable" in issue_signal.detail
+    assert "0/0" not in issue_signal.detail
+
+    issue_signal_json = next(
+        signal
+        for signal in assessment.to_dict()["signals"]
+        if signal["name"] == "Issue triage signals"
+    )
+    assert issue_signal_json["confidence"] == "no-data"
+    assert "no open issues" in issue_signal_json["detail"]
+
+
 def test_issue_signal_uses_oldest_issue_sample_for_stale_unanswered_detection() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/old-stale",

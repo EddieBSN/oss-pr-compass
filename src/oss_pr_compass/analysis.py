@@ -252,10 +252,11 @@ def _issue_triage_signal(
     )
     contributor_labels = _contributor_labels(snapshot)
     contributor_label_points = 3 if contributor_labels else 0
+    no_open_issues = sampled_issue_count == 0 and total_issue_count == 0
     missing_issue_sample = sampled_issue_count == 0 and total_issue_count > 0
 
     labeled_issue_count = sum(1 for issue in issues if issue.labels)
-    if missing_issue_sample:
+    if missing_issue_sample or no_open_issues:
         label_points = 0
     else:
         label_ratio = labeled_issue_count / sampled_issue_count if sampled_issue_count else 1.0
@@ -285,7 +286,7 @@ def _issue_triage_signal(
     ]
     if missing_issue_sample:
         stale_points = 0
-    elif stale_sampled_issue_count == 0 or not stale_unanswered:
+    elif no_open_issues or stale_sampled_issue_count == 0 or not stale_unanswered:
         stale_points = 2
     elif (
         len(stale_unanswered) <= thresholds.stale_unanswered_minimum
@@ -306,7 +307,7 @@ def _issue_triage_signal(
     response_ratio = (
         len(recent_maintainer_responses) / sampled_issue_count if sampled_issue_count else 1.0
     )
-    if missing_issue_sample:
+    if missing_issue_sample or no_open_issues:
         response_points = 0
     elif response_ratio >= thresholds.maintainer_response_full_ratio:
         response_points = 2
@@ -335,6 +336,12 @@ def _issue_triage_signal(
             f"{label_detail}; 0 sampled open issues available from "
             f"{total_issue_count} total open issues; issue triage sample incomplete."
         )
+    elif no_open_issues:
+        detail = (
+            f"{label_detail}; no open issues; "
+            "label coverage and maintainer response evidence unavailable; "
+            "0 stale unanswered."
+        )
     else:
         if snapshot.oldest_open_issues:
             stale_detail = (
@@ -356,6 +363,8 @@ def _issue_triage_signal(
     confidence = "high"
     if snapshot.issue_comment_evidence_incomplete:
         confidence = "incomplete"
+    elif no_open_issues:
+        confidence = "no-data"
     elif sampled:
         confidence = "sampled"
     return Signal(
