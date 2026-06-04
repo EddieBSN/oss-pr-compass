@@ -42,6 +42,7 @@ class RepositorySnapshot:
     open_issues: tuple[IssueSnapshot, ...] = ()
     oldest_open_issues: tuple[IssueSnapshot, ...] = ()
     open_issue_count: int | None = None
+    issue_comment_evidence_incomplete: bool = False
 
 
 @dataclass(frozen=True)

@@ -518,6 +518,47 @@ def test_issue_signal_does_not_treat_issue_as_stale_when_maintainer_responded_la
     assert "0 stale unanswered" in issue_signal.detail
 
 
+def test_issue_signal_reports_incomplete_issue_comment_evidence() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/incomplete-comments",
+        html_url="https://github.com/example/incomplete-comments",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=12,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 15, tzinfo=timezone.utc),
+                comment_count=301,
+                author_association="CONTRIBUTOR",
+            ),
+        ),
+        issue_comment_evidence_incomplete=True,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.confidence == "incomplete"
+    assert "issue comment evidence incomplete" in issue_signal.detail
+
+
 def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/drafts",
