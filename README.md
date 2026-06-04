@@ -220,6 +220,7 @@ Supported threshold keys:
 - Invalid config: `.oss-pr-compass.json` must be strict JSON with only supported keys.
 - Unknown thresholds or signals: check the tables above for accepted names.
 - GitHub 404s: confirm the repository is public and the API token can read it.
+- Malformed GitHub API data: `oss-pr-compass` exits with `error:` and field context instead of a traceback.
 
 ## Project Status
 
