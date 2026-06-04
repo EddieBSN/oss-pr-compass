@@ -275,17 +275,22 @@ def _issue_triage_signal(
     else:
         issue_queue_points = 0
 
+    stale_sample_issues = snapshot.oldest_open_issues or issues
+    stale_sampled_issue_count = len(stale_sample_issues)
     stale_cutoff = now - timedelta(days=thresholds.stale_unanswered_days)
     stale_unanswered = [
-        issue for issue in issues if _is_stale_unanswered_external_issue(issue, stale_cutoff)
+        issue
+        for issue in stale_sample_issues
+        if _is_stale_unanswered_external_issue(issue, stale_cutoff)
     ]
     if missing_issue_sample:
         stale_points = 0
-    elif sampled_issue_count == 0 or not stale_unanswered:
+    elif stale_sampled_issue_count == 0 or not stale_unanswered:
         stale_points = 2
     elif (
         len(stale_unanswered) <= thresholds.stale_unanswered_minimum
-        or len(stale_unanswered) / sampled_issue_count <= thresholds.stale_unanswered_partial_ratio
+        or len(stale_unanswered) / stale_sampled_issue_count
+        <= thresholds.stale_unanswered_partial_ratio
     ):
         stale_points = 1
     else:
@@ -331,13 +336,21 @@ def _issue_triage_signal(
             f"{total_issue_count} total open issues; issue triage sample incomplete."
         )
     else:
+        if snapshot.oldest_open_issues:
+            stale_detail = (
+                f"{len(stale_unanswered)} stale unanswered in oldest open issue sample; "
+                f"sampled {stale_sampled_issue_count}/{total_issue_count} for stale checks"
+            )
+        else:
+            stale_detail = f"{len(stale_unanswered)} stale unanswered in sample"
         detail = (
             f"{label_detail}; {labeled_issue_count}/{sampled_issue_count} sampled open issues "
             f"labeled; {total_issue_count} total open issues; "
-            f"{len(stale_unanswered)} stale unanswered in sample; "
-            f"{len(recent_maintainer_responses)} recent maintainer responses."
+            f"{stale_detail}; {len(recent_maintainer_responses)} recent maintainer responses."
         )
-    sampled = snapshot.open_issue_count is not None and total_issue_count > sampled_issue_count
+    sampled = snapshot.open_issue_count is not None and (
+        total_issue_count > sampled_issue_count or total_issue_count > stale_sampled_issue_count
+    )
     return Signal(
         "Issue triage signals",
         points,
