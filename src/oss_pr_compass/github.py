@@ -131,7 +131,20 @@ class GitHubClient:
             if "pull_request" not in issue
         ]
         latest_maintainer_comments = self._latest_maintainer_issue_comments(owner, name)
-        open_pr_count = self._search_issue_count(owner, name, "pr")
+        open_pr_count = self._search_issue_count(
+            owner,
+            name,
+            "pr",
+            extra_qualifiers=("draft:false",),
+            description="ready-for-review open PRs",
+        )
+        draft_open_pr_count = self._search_issue_count(
+            owner,
+            name,
+            "pr",
+            extra_qualifiers=("draft:true",),
+            description="draft open PRs",
+        )
         open_issue_count = self._search_issue_count(owner, name, "issue")
 
         merged_prs = tuple(pr for pr in closed_prs if pr.get("merged_at"))
@@ -157,6 +170,7 @@ class GitHubClient:
             external_merged_pr_count=external_merged_pr_count,
             maintainer_merged_pr_count=maintainer_merged_pr_count,
             bot_merged_pr_count=bot_merged_pr_count,
+            draft_open_pr_count=draft_open_pr_count,
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
@@ -354,8 +368,19 @@ class GitHubClient:
                 latest[issue_number] = updated_at
         return latest
 
-    def _search_issue_count(self, owner: str, name: str, item_type: str) -> int:
+    def _search_issue_count(
+        self,
+        owner: str,
+        name: str,
+        item_type: str,
+        *,
+        extra_qualifiers: tuple[str, ...] = (),
+        description: str | None = None,
+    ) -> int:
         query = f"repo:{owner}/{name} type:{item_type} state:open"
+        if extra_qualifiers:
+            query = f"{query} {' '.join(extra_qualifiers)}"
+        count_description = description or f"open {item_type}s"
         payload = self.get_json(
             "/search/issues",
             {
@@ -364,11 +389,11 @@ class GitHubClient:
             },
         )
         if not isinstance(payload, dict) or not isinstance(payload.get("total_count"), int):
-            raise GitHubError(f"Expected search count for open {item_type}s from /search/issues.")
+            raise GitHubError(f"Expected search count for {count_description} from /search/issues.")
         if payload.get("incomplete_results") is True:
             raise GitHubError(
                 "GitHub Search returned incomplete results "
-                f"for open {item_type}s from /search/issues."
+                f"for {count_description} from /search/issues."
             )
         return int(payload["total_count"])
 

@@ -91,9 +91,11 @@ def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> 
         "/repos/new/repo/issues/comments",
         "/search/issues",
         "/search/issues",
+        "/search/issues",
     ]
     assert client.search_queries == [
-        "repo:new/repo type:pr state:open",
+        "repo:new/repo type:pr state:open draft:false",
+        "repo:new/repo type:pr state:open draft:true",
         "repo:new/repo type:issue state:open",
     ]
 
@@ -145,6 +147,17 @@ def test_fetch_snapshot_preserves_merged_pr_author_classification() -> None:
     assert snapshot.external_merged_pr_count == 1
     assert snapshot.maintainer_merged_pr_count == 1
     assert snapshot.bot_merged_pr_count == 1
+
+
+def test_fetch_snapshot_counts_ready_for_review_prs_separately_from_drafts() -> None:
+    client = DraftPullRequestSearchGitHubClient(_base_payloads(), ready_count=4, draft_count=90)
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert snapshot.open_pr_count == 4
+    assert snapshot.draft_open_pr_count == 90
+    assert "repo:owner/repo type:pr state:open draft:false" in client.search_queries
+    assert "repo:owner/repo type:pr state:open draft:true" in client.search_queries
 
 
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
@@ -506,6 +519,10 @@ class FakeGitHubClient(GitHubClient):
                         for index in range(24)
                     ],
                 }
+            if "type:pr" in query and "draft:false" in query:
+                return {"total_count": 123}
+            if "type:pr" in query and "draft:true" in query:
+                return {"total_count": 0}
             if "type:pr" in query:
                 return {"total_count": 123}
             if "type:issue" in query:
@@ -558,6 +575,24 @@ class MergedPullRequestSearchGitHubClient(FakeGitHubClient):
                 "incomplete_results": False,
                 "items": self.merged_items,
             }
+        return super().get_json(path, params)
+
+
+class DraftPullRequestSearchGitHubClient(FakeGitHubClient):
+    def __init__(self, payloads: dict[str, object], *, ready_count: int, draft_count: int):
+        super().__init__(payloads)
+        self.ready_count = ready_count
+        self.draft_count = draft_count
+        self.search_queries: list[str] = []
+
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        query = (params or {}).get("q", "")
+        if path == "/search/issues":
+            self.search_queries.append(query)
+            if "type:pr" in query and "draft:false" in query:
+                return {"total_count": self.ready_count}
+            if "type:pr" in query and "draft:true" in query:
+                return {"total_count": self.draft_count}
         return super().get_json(path, params)
 
 

@@ -125,7 +125,7 @@ The score is intentionally simple and inspectable:
 | Contribution documentation | 14 | `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` are present. | 9 points for contributing docs, 5 points for code of conduct. |
 | Pull request template | 8 | A supported pull request template is present in the root, `docs/`, `.github/`, or a `PULL_REQUEST_TEMPLATE/` directory. | None. |
 | CI and test signals | 14 | CI workflows and a `tests` or `test` directory are present. | 7 points for CI, 7 points for tests. |
-| Open pull request queue | 8 | 10 or fewer open PRs. | 6 points for 50 or fewer, or 3 points for 100 or fewer. |
+| Open pull request queue | 8 | 10 or fewer ready-for-review open PRs. | 6 points for 50 or fewer, or 3 points for 100 or fewer. Draft PRs are reported but excluded from review queue pressure. |
 | Issue triage signals | 12 | Contributor labels, labeled open issues, manageable issue count, few stale unanswered issues, and recent maintainer responses are all present. | Subscores are contributor labels 3, labeled issues 3, issue queue 2, stale unanswered issues 2, maintainer responses 2. |
 
 Scores are grouped into three verdicts:
@@ -140,13 +140,14 @@ metadata.
 GitHub API collection follows Link-header pagination with endpoint-specific caps to avoid unbounded workflow runtime.
 Merged PR activity, open PR queues, and open issue queues come from GitHub Search. Merged PR activity uses a
 lookback-bound `is:merged merged:>=...` query instead of capped recently updated closed PR pages, then classifies
-merged PR authors as external human, maintainer, or bot/app before scoring. If GitHub Search reports incomplete count
-results or cannot return the merged PR items needed for classification within the bounded page limit, `oss-pr-compass`
-exits with a GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests retry transient
-network failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or secondary-rate-limit 403
-responses. Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/`
-directories. Issue triage quality samples recently updated open issues and comments; large repositories are marked with
-sampled confidence metadata when the total issue count exceeds the inspected sample.
+merged PR authors as external human, maintainer, or bot/app before scoring. Open PR queue pressure uses `draft:false`
+for ready-for-review PRs and separately reports `draft:true` PRs. If GitHub Search reports incomplete count results or
+cannot return the merged PR items needed for classification within the bounded page limit, `oss-pr-compass` exits with a
+GitHub API error instead of treating those totals as exact. Idempotent GitHub GET requests retry transient network
+failures, HTTP 502/503/504 responses, and short `Retry-After` windows for 429 or secondary-rate-limit 403 responses.
+Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories.
+Issue triage quality samples recently updated open issues and comments; large repositories are marked with sampled
+confidence metadata when the total issue count exceeds the inspected sample.
 
 ## Scoring Configuration
 

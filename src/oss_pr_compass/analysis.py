@@ -229,7 +229,13 @@ def _open_pr_queue_signal(
         points = _scaled_points(max_points, 0.40)
     else:
         points = 0
-    return Signal("Open pull request queue", points, max_points, f"{count} open PRs.")
+    if snapshot.draft_open_pr_count is None:
+        detail = f"{count} open PRs."
+    else:
+        detail = (
+            f"{count} ready-for-review open PRs; {snapshot.draft_open_pr_count} draft PRs excluded."
+        )
+    return Signal("Open pull request queue", points, max_points, detail)
 
 
 def _issue_triage_signal(
