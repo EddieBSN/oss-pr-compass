@@ -88,11 +88,13 @@ def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> 
         "/repos/new/repo/pulls",
         "/repos/new/repo/labels",
         "/search/issues",
+        "/search/issues",
         "/repos/new/repo/issues/comments",
         "/search/issues",
         "/search/issues",
     ]
     assert client.search_queries == [
+        "repo:new/repo type:issue state:open",
         "repo:new/repo type:issue state:open",
         "repo:new/repo type:pr state:open draft:false",
         "repo:new/repo type:pr state:open draft:true",
@@ -192,6 +194,17 @@ def test_fetch_snapshot_samples_actual_issues_with_issue_search() -> None:
     assert snapshot.open_issue_count == 2
     assert "/repos/owner/repo/issues" not in client.paths
     assert "repo:owner/repo type:issue state:open" in client.search_queries
+
+
+def test_fetch_snapshot_collects_oldest_open_issue_sample_for_stale_detection() -> None:
+    client = OrderedIssueSearchGitHubClient(_base_payloads())
+
+    snapshot = client.fetch_snapshot("owner/repo")
+
+    assert [issue.number for issue in snapshot.open_issues] == [301]
+    assert [issue.number for issue in snapshot.oldest_open_issues] == [101]
+    assert ("repo:owner/repo type:issue state:open", "updated", "desc") in client.search_params
+    assert ("repo:owner/repo type:issue state:open", "updated", "asc") in client.search_params
 
 
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
@@ -643,6 +656,49 @@ class OpenIssueSearchGitHubClient(RecordingGitHubClient):
                 "total_count": len(self.issue_items),
                 "incomplete_results": False,
                 "items": self.issue_items,
+            }
+        return super().get_json(path, params)
+
+
+class OrderedIssueSearchGitHubClient(FakeGitHubClient):
+    def __init__(self, payloads: dict[str, object]):
+        super().__init__(payloads)
+        self.search_params: list[tuple[str, str | None, str | None]] = []
+
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        query = (params or {}).get("q", "")
+        sort = (params or {}).get("sort")
+        order = (params or {}).get("order")
+        if path == "/search/issues" and "type:issue" in query:
+            self.search_params.append((query, sort, order))
+            if order == "asc":
+                return {
+                    "total_count": 2,
+                    "incomplete_results": False,
+                    "items": [
+                        {
+                            "number": 101,
+                            "labels": [],
+                            "created_at": "2026-03-01T00:00:00Z",
+                            "updated_at": "2026-03-01T00:00:00Z",
+                            "comments": 0,
+                            "author_association": "CONTRIBUTOR",
+                        }
+                    ],
+                }
+            return {
+                "total_count": 2,
+                "incomplete_results": False,
+                "items": [
+                    {
+                        "number": 301,
+                        "labels": [{"name": "bug"}],
+                        "created_at": "2026-06-01T00:00:00Z",
+                        "updated_at": "2026-06-01T00:00:00Z",
+                        "comments": 0,
+                        "author_association": "CONTRIBUTOR",
+                    }
+                ],
             }
         return super().get_json(path, params)
 

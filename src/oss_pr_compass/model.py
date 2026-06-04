@@ -39,6 +39,7 @@ class RepositorySnapshot:
     draft_open_pr_count: int | None = None
     labels: tuple[str, ...] = ()
     open_issues: tuple[IssueSnapshot, ...] = ()
+    oldest_open_issues: tuple[IssueSnapshot, ...] = ()
     open_issue_count: int | None = None
 
 

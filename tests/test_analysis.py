@@ -382,6 +382,59 @@ def test_issue_signal_does_not_treat_missing_sample_as_healthy_triage() -> None:
     assert "0 sampled open issues available from 25 total open issues" in issue_signal.detail
 
 
+def test_issue_signal_uses_oldest_issue_sample_for_stale_unanswered_detection() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/old-stale",
+        html_url="https://github.com/example/old-stale",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=1,
+                labels=("bug",),
+                created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                comment_count=0,
+                author_association="CONTRIBUTOR",
+            ),
+        ),
+        oldest_open_issues=(
+            IssueSnapshot(
+                number=2,
+                labels=("help wanted",),
+                created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+                comment_count=0,
+                author_association="CONTRIBUTOR",
+            ),
+        ),
+        open_issue_count=250,
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points < issue_signal.max_points
+    assert "1 stale unanswered in oldest open issue sample" in issue_signal.detail
+    assert "sampled 1/250" in issue_signal.detail
+    assert issue_signal.sampled is True
+
+
 def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/drafts",

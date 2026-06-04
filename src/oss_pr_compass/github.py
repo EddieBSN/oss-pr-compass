@@ -114,7 +114,8 @@ class GitHubClient:
             max_pages=REPOSITORY_LABEL_PAGE_LIMIT,
             allow_truncated=True,
         )
-        open_issue_count, open_issue_items = self._open_issue_items(owner, name)
+        open_issue_count, open_issue_items = self._open_issue_items(owner, name, order="desc")
+        _, oldest_open_issue_items = self._open_issue_items(owner, name, order="asc")
         latest_maintainer_comments = self._latest_maintainer_issue_comments(owner, name)
         open_pr_count = self._search_issue_count(
             owner,
@@ -158,19 +159,10 @@ class GitHubClient:
             labels=tuple(
                 label["name"] for label in labels if isinstance(label, dict) and "name" in label
             ),
-            open_issues=tuple(
-                IssueSnapshot(
-                    number=int(issue.get("number") or 0),
-                    labels=_issue_label_names(issue),
-                    created_at=parse_datetime(issue.get("created_at")),
-                    updated_at=parse_datetime(issue.get("updated_at")),
-                    comment_count=int(issue.get("comments") or 0),
-                    author_association=str(issue.get("author_association") or ""),
-                    latest_maintainer_comment_at=latest_maintainer_comments.get(
-                        int(issue.get("number") or 0)
-                    ),
-                )
-                for issue in open_issue_items
+            open_issues=_issue_snapshots(open_issue_items, latest_maintainer_comments),
+            oldest_open_issues=_issue_snapshots(
+                oldest_open_issue_items,
+                latest_maintainer_comments,
             ),
             open_issue_count=open_issue_count,
         )
@@ -381,13 +373,19 @@ class GitHubClient:
             )
         return int(payload["total_count"])
 
-    def _open_issue_items(self, owner: str, name: str) -> tuple[int, list[dict[str, Any]]]:
+    def _open_issue_items(
+        self,
+        owner: str,
+        name: str,
+        *,
+        order: str,
+    ) -> tuple[int, list[dict[str, Any]]]:
         total_count, items = self._search_issue_items(
             f"repo:{owner}/{name} type:issue state:open",
             "open issues",
             max_pages=OPEN_ISSUE_SAMPLE_PAGE_LIMIT,
             allow_truncated=True,
-            extra_params={"sort": "updated", "order": "desc"},
+            extra_params={"sort": "updated", "order": order},
         )
         return total_count, [item for item in items if "pull_request" not in item]
 
@@ -555,6 +553,26 @@ def _issue_number_from_url(value: object) -> int | None:
         return int(value.rstrip("/").rsplit("/", 1)[-1])
     except ValueError:
         return None
+
+
+def _issue_snapshots(
+    items: list[dict[str, Any]],
+    latest_maintainer_comments: dict[int, datetime],
+) -> tuple[IssueSnapshot, ...]:
+    return tuple(
+        IssueSnapshot(
+            number=int(issue.get("number") or 0),
+            labels=_issue_label_names(issue),
+            created_at=parse_datetime(issue.get("created_at")),
+            updated_at=parse_datetime(issue.get("updated_at")),
+            comment_count=int(issue.get("comments") or 0),
+            author_association=str(issue.get("author_association") or ""),
+            latest_maintainer_comment_at=latest_maintainer_comments.get(
+                int(issue.get("number") or 0)
+            ),
+        )
+        for issue in items
+    )
 
 
 def _issue_label_names(issue: dict[str, Any]) -> tuple[str, ...]:
