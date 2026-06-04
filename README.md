@@ -42,6 +42,9 @@ oss-pr-compass pypa/pipx --days 30
 oss-pr-compass pypa/pipx --fail-under 75
 ```
 
+Repository input can be `owner/name` or a GitHub repository URL. Query strings, fragments, and a repository `.git`
+suffix are normalized away; issue, pull request, tree, and blob URLs are rejected.
+
 Authenticated requests get higher GitHub API limits:
 
 ```bash

@@ -16,6 +16,9 @@ from oss_pr_compass.github import GitHubClient, GitHubError, GitHubResponse, par
         ("owner/repo/", ("owner", "repo")),
         ("https://github.com/owner/repo", ("owner", "repo")),
         ("https://github.com/owner/repo/", ("owner", "repo")),
+        ("https://github.com/owner/repo?tab=readme", ("owner", "repo")),
+        ("https://github.com/owner/repo#readme", ("owner", "repo")),
+        ("https://github.com/owner/repo.git", ("owner", "repo")),
     ),
 )
 def test_parse_repository_accepts_repository_identifiers(
@@ -34,6 +37,7 @@ def test_parse_repository_accepts_repository_identifiers(
         "https://github.com/owner/repo/issues/1",
         "https://github.com/owner/repo/pull/2",
         "https://github.com/owner/repo/tree/main",
+        "https://github.com/owner/repo/blob/main/README.md",
         "https://example.com/owner/repo",
         "git@github.com:owner/repo.git",
     ),
@@ -50,6 +54,47 @@ def test_fetch_snapshot_uses_search_counts_for_open_queues() -> None:
 
     assert snapshot.open_pr_count == 123
     assert snapshot.open_issue_count == 456
+
+
+def test_fetch_snapshot_uses_canonical_repository_full_name_after_redirect() -> None:
+    payloads = _base_payloads(owner="new", name="repo")
+    payloads["/repos/old/repo"] = {
+        "full_name": "new/repo",
+        "html_url": "https://github.com/new/repo",
+        "description": "Example",
+        "stargazers_count": 1,
+        "forks_count": 2,
+        "archived": False,
+        "pushed_at": "2026-06-01T00:00:00Z",
+        "default_branch": "main",
+        "license": {"spdx_id": "MIT"},
+        "topics": ["python"],
+    }
+    client = RecordingGitHubClient(payloads)
+
+    snapshot = client.fetch_snapshot("old/repo")
+
+    assert snapshot.full_name == "new/repo"
+    assert client.paths == [
+        "/repos/old/repo",
+        "/repos/new/repo/contents/",
+        "/repos/new/repo/contents/.github",
+        "/repos/new/repo/contents/docs",
+        "/repos/new/repo/contents/PULL_REQUEST_TEMPLATE",
+        "/repos/new/repo/contents/.github/PULL_REQUEST_TEMPLATE",
+        "/repos/new/repo/contents/docs/PULL_REQUEST_TEMPLATE",
+        "/repos/new/repo/contents/.github/workflows",
+        "/repos/new/repo/pulls",
+        "/repos/new/repo/labels",
+        "/repos/new/repo/issues",
+        "/repos/new/repo/issues/comments",
+        "/search/issues",
+        "/search/issues",
+    ]
+    assert client.search_queries == [
+        "repo:new/repo type:pr state:open",
+        "repo:new/repo type:issue state:open",
+    ]
 
 
 def test_fetch_snapshot_rejects_incomplete_search_counts() -> None:
@@ -400,6 +445,19 @@ class FakeGitHubClient(GitHubClient):
         return GitHubResponse(self.get_json(path, params), {})
 
 
+class RecordingGitHubClient(FakeGitHubClient):
+    def __init__(self, payloads: dict[str, object]):
+        super().__init__(payloads)
+        self.paths: list[str] = []
+        self.search_queries: list[str] = []
+
+    def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
+        self.paths.append(path)
+        if path == "/search/issues":
+            self.search_queries.append((params or {}).get("q", ""))
+        return super().get_json(path, params)
+
+
 class IncompleteSearchGitHubClient(FakeGitHubClient):
     def get_json(self, path: str, params: dict[str, str] | None = None) -> object:
         if path == "/search/issues":
@@ -455,11 +513,12 @@ class CrossOriginPaginatedGitHubClient(GitHubClient):
         raise AssertionError(f"off-origin URL should not be followed: {url}")
 
 
-def _base_payloads() -> dict[str, object]:
+def _base_payloads(*, owner: str = "owner", name: str = "repo") -> dict[str, object]:
+    repository = f"{owner}/{name}"
     return {
-        "/repos/owner/repo": {
-            "full_name": "owner/repo",
-            "html_url": "https://github.com/owner/repo",
+        f"/repos/{repository}": {
+            "full_name": repository,
+            "html_url": f"https://github.com/{repository}",
             "description": "Example",
             "stargazers_count": 1,
             "forks_count": 2,
@@ -469,15 +528,15 @@ def _base_payloads() -> dict[str, object]:
             "license": {"spdx_id": "MIT"},
             "topics": ["python"],
         },
-        "/repos/owner/repo/contents/": [],
-        "/repos/owner/repo/contents/.github": [],
-        "/repos/owner/repo/contents/docs": [],
-        "/repos/owner/repo/contents/PULL_REQUEST_TEMPLATE": [],
-        "/repos/owner/repo/contents/.github/PULL_REQUEST_TEMPLATE": [],
-        "/repos/owner/repo/contents/docs/PULL_REQUEST_TEMPLATE": [],
-        "/repos/owner/repo/contents/.github/workflows": [],
-        "/repos/owner/repo/pulls": [],
-        "/repos/owner/repo/labels": [],
-        "/repos/owner/repo/issues": [],
-        "/repos/owner/repo/issues/comments": [],
+        f"/repos/{repository}/contents/": [],
+        f"/repos/{repository}/contents/.github": [],
+        f"/repos/{repository}/contents/docs": [],
+        f"/repos/{repository}/contents/PULL_REQUEST_TEMPLATE": [],
+        f"/repos/{repository}/contents/.github/PULL_REQUEST_TEMPLATE": [],
+        f"/repos/{repository}/contents/docs/PULL_REQUEST_TEMPLATE": [],
+        f"/repos/{repository}/contents/.github/workflows": [],
+        f"/repos/{repository}/pulls": [],
+        f"/repos/{repository}/labels": [],
+        f"/repos/{repository}/issues": [],
+        f"/repos/{repository}/issues/comments": [],
     }
