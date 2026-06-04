@@ -347,6 +347,37 @@ def test_issue_signal_uses_total_open_issue_count_for_queue_pressure() -> None:
     assert issue_signal.confidence == "sampled"
 
 
+def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/drafts",
+        html_url="https://github.com/example/drafts",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=5,
+        draft_open_pr_count=75,
+        labels=("good first issue",),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Open pull request queue")
+    assert signal.points == signal.max_points
+    assert signal.detail == "5 ready-for-review open PRs; 75 draft PRs excluded."
+
+
 def test_archived_repository_cannot_receive_strong_verdict() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/archived",
