@@ -603,6 +603,172 @@ def test_issue_signal_reports_incomplete_issue_comment_evidence() -> None:
     assert "issue comment evidence incomplete" in issue_signal.detail
 
 
+def test_issue_signal_scores_maintainer_responses_against_external_issues() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/external-response-denominator",
+        html_url="https://github.com/example/external-response-denominator",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=20,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="MEMBER",
+                latest_maintainer_comment_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            ),
+            IssueSnapshot(
+                number=21,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="OWNER",
+                latest_maintainer_comment_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            ),
+            IssueSnapshot(
+                number=22,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                comment_count=0,
+                author_association="CONTRIBUTOR",
+            ),
+            IssueSnapshot(
+                number=23,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 11, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 11, tzinfo=timezone.utc),
+                comment_count=0,
+                author_association="NONE",
+            ),
+        ),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points == 10
+    assert "0/2 external sampled issues with recent maintainer responses" in issue_signal.detail
+
+
+def test_issue_signal_awards_response_points_for_external_issue_responses() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/external-responses",
+        html_url="https://github.com/example/external-responses",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=24,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="CONTRIBUTOR",
+                latest_maintainer_comment_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            ),
+            IssueSnapshot(
+                number=25,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                comment_count=0,
+                author_association="CONTRIBUTOR",
+            ),
+        ),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points == issue_signal.max_points
+    assert "1/2 external sampled issues with recent maintainer responses" in issue_signal.detail
+
+
+def test_issue_signal_reports_no_external_issue_response_denominator() -> None:
+    snapshot = RepositorySnapshot(
+        full_name="example/no-external-issues",
+        html_url="https://github.com/example/no-external-issues",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=(),
+        root_entries=frozenset({"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "tests"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(
+            IssueSnapshot(
+                number=26,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="MEMBER",
+                latest_maintainer_comment_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            ),
+            IssueSnapshot(
+                number=27,
+                labels=("bug",),
+                created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+                comment_count=1,
+                author_association="OWNER",
+                latest_maintainer_comment_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+
+    assessment = assess_repository(
+        snapshot,
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    issue_signal = _signal(assessment, "Issue triage signals")
+    assert issue_signal.points == 10
+    assert issue_signal.confidence == "no-data"
+    assert "0 external sampled issues for maintainer response checks" in issue_signal.detail
+
+
 def test_open_pr_queue_scores_ready_for_review_prs_and_reports_drafts() -> None:
     snapshot = RepositorySnapshot(
         full_name="example/drafts",

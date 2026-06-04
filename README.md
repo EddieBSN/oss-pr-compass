@@ -151,11 +151,12 @@ totals as exact. Idempotent GitHub GET requests retry transient network failures
 `Retry-After` windows for 429 or secondary-rate-limit 403 responses.
 Pull request template detection covers root, `docs/`, `.github/`, and supported `PULL_REQUEST_TEMPLATE/` directories.
 Issue triage quality samples recently updated open issues, then fetches bounded issue-specific comments for each
-sampled issue so maintainer response and stale-unanswered evidence is tied to the inspected issues. Large repositories,
-repositories where the issue sample is smaller than the total issue count, or sampled issues whose comment pagination is
-capped are marked with sampled or incomplete confidence metadata. Repositories with no open issues can receive objective
-queue and stale-unanswered credit, but sample-dependent label coverage and maintainer response evidence is reported as
-no-data instead of full triage health.
+sampled issue so maintainer response and stale-unanswered evidence is tied to the inspected issues. Maintainer-response
+scoring uses externally authored sampled issues as its denominator, so maintainer-authored issue activity cannot inflate
+contributor-response credit. Large repositories, repositories where the issue sample is smaller than the total issue
+count, or sampled issues whose comment pagination is capped are marked with sampled or incomplete confidence metadata.
+Repositories with no open issues can receive objective queue and stale-unanswered credit, but sample-dependent label
+coverage and maintainer response evidence is reported as no-data instead of full triage health.
 
 ## Scoring Configuration
 
