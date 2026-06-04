@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from oss_pr_compass.analysis import assess_repository
 from oss_pr_compass.config import ScoreConfig
-from oss_pr_compass.model import IssueSnapshot, RepositorySnapshot
+from oss_pr_compass.model import Assessment, IssueSnapshot, RepositorySnapshot, Signal
 
 
 def test_strong_repository_scores_high() -> None:
@@ -62,6 +64,57 @@ def test_strong_repository_scores_high() -> None:
     assert assessment.score == 100
     assert assessment.verdict == "strong"
     assert not assessment.recommendations
+
+
+@pytest.mark.parametrize(
+    "entry",
+    (
+        "PULL_REQUEST_TEMPLATE.md",
+        "pull_request_template.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/pull_request_template.md",
+        "docs/PULL_REQUEST_TEMPLATE.md",
+        "docs/pull_request_template.md",
+        "PULL_REQUEST_TEMPLATE/feature.md",
+        ".github/PULL_REQUEST_TEMPLATE/bugfix.md",
+        "docs/PULL_REQUEST_TEMPLATE/release.md",
+    ),
+)
+def test_pull_request_template_signal_accepts_supported_locations(entry: str) -> None:
+    assessment = assess_repository(
+        _snapshot_with_root_entries(frozenset({entry})),
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Pull request template")
+    assert signal.points == signal.max_points
+    assert signal.detail == "Pull request template found."
+
+
+@pytest.mark.parametrize(
+    "entries",
+    (
+        frozenset({"PULL_REQUEST_TEMPLATE"}),
+        frozenset({".github/PULL_REQUEST_TEMPLATE"}),
+        frozenset({"docs/PULL_REQUEST_TEMPLATE"}),
+        frozenset({"PULL_REQUEST_TEMPLATE/README.txt"}),
+        frozenset({".github/PULL_REQUEST_TEMPLATE/assets.png"}),
+        frozenset({"docs/not_a_template.md"}),
+    ),
+)
+def test_pull_request_template_signal_rejects_empty_or_unrelated_entries(
+    entries: frozenset[str],
+) -> None:
+    assessment = assess_repository(
+        _snapshot_with_root_entries(entries),
+        days=90,
+        now=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+
+    signal = _signal(assessment, "Pull request template")
+    assert signal.points == 0
+    assert signal.detail == "No pull request template found."
 
 
 def test_inactive_repository_gets_actionable_recommendations() -> None:
@@ -255,3 +308,26 @@ def test_archived_repository_cannot_receive_strong_verdict() -> None:
 
     assert assessment.score >= 75
     assert assessment.verdict == "needs-work"
+
+
+def _snapshot_with_root_entries(entries: frozenset[str]) -> RepositorySnapshot:
+    return RepositorySnapshot(
+        full_name="example/templates",
+        html_url="https://github.com/example/templates",
+        description="Example",
+        stars=5,
+        forks=1,
+        archived=False,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx=None,
+        topics=(),
+        root_entries=entries,
+        workflow_entries=frozenset(),
+        merged_prs=(),
+        open_pr_count=0,
+    )
+
+
+def _signal(assessment: Assessment, name: str) -> Signal:
+    return next(signal for signal in assessment.signals if signal.name == name)

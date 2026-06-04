@@ -23,6 +23,11 @@ OPEN_ISSUE_SAMPLE_PAGE_LIMIT = 3
 REPOSITORY_LABEL_PAGE_LIMIT = 10
 RETRY_AFTER_HTTP_STATUS_CODES = {403, 429}
 TRANSIENT_HTTP_STATUS_CODES = {502, 503, 504}
+PULL_REQUEST_TEMPLATE_DIRECTORIES = (
+    "PULL_REQUEST_TEMPLATE",
+    ".github/PULL_REQUEST_TEMPLATE",
+    "docs/PULL_REQUEST_TEMPLATE",
+)
 
 
 class GitHubError(RuntimeError):
@@ -57,6 +62,8 @@ class GitHubClient:
         github_entries = {
             f".github/{entry}" for entry in self._content_names(owner, name, ".github")
         }
+        docs_entries = {f"docs/{entry}" for entry in self._content_names(owner, name, "docs")}
+        pull_request_template_entries = self._pull_request_template_entries(owner, name)
         workflow_entries = set(self._content_names(owner, name, ".github/workflows"))
         closed_prs = self._get_list(
             f"/repos/{owner}/{name}/pulls",
@@ -110,7 +117,9 @@ class GitHubClient:
             default_branch=repo.get("default_branch") or "main",
             license_spdx=(repo.get("license") or {}).get("spdx_id"),
             topics=tuple(repo.get("topics") or ()),
-            root_entries=frozenset(root_entries | github_entries),
+            root_entries=frozenset(
+                root_entries | github_entries | docs_entries | pull_request_template_entries
+            ),
             workflow_entries=frozenset(workflow_entries),
             merged_prs=merged_prs,
             open_pr_count=open_pr_count,
@@ -251,6 +260,18 @@ class GitHubClient:
         )
 
     def _content_names(self, owner: str, name: str, path: str) -> list[str]:
+        content = self._content_items(owner, name, path)
+        return [entry["name"] for entry in content if isinstance(entry.get("name"), str)]
+
+    def _content_file_names(self, owner: str, name: str, path: str) -> list[str]:
+        content = self._content_items(owner, name, path)
+        return [
+            entry["name"]
+            for entry in content
+            if isinstance(entry.get("name"), str) and entry.get("type") == "file"
+        ]
+
+    def _content_items(self, owner: str, name: str, path: str) -> list[dict[str, Any]]:
         try:
             content = self.get_json(f"/repos/{owner}/{name}/contents/{path}")
         except GitHubError as exc:
@@ -259,7 +280,15 @@ class GitHubClient:
             raise
         if not isinstance(content, list):
             return []
-        return [entry["name"] for entry in content if isinstance(entry, dict) and "name" in entry]
+        return [entry for entry in content if isinstance(entry, dict)]
+
+    def _pull_request_template_entries(self, owner: str, name: str) -> set[str]:
+        entries: set[str] = set()
+        for directory in PULL_REQUEST_TEMPLATE_DIRECTORIES:
+            entries.update(
+                f"{directory}/{entry}" for entry in self._content_file_names(owner, name, directory)
+            )
+        return entries
 
     def _latest_maintainer_issue_comments(self, owner: str, name: str) -> dict[int, datetime]:
         comments = self._get_list(
