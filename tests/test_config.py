@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from oss_pr_compass.config import ScoreConfigError, parse_score_config
+from oss_pr_compass.config import (
+    ScoreConfigError,
+    parse_score_config,
+    validate_score_config_fragment,
+)
 
 
 def test_parse_score_config_accepts_signal_aliases_and_thresholds() -> None:
@@ -92,6 +96,24 @@ def test_parse_score_config_rejects_invalid_threshold_order() -> None:
               "thresholds": {
                 "recent_activity_full_days": 120,
                 "recent_activity_partial_days": 90
+              }
+            }
+            """
+        )
+
+
+def test_validate_score_config_fragment_allows_remote_dependent_thresholds() -> None:
+    validate_score_config_fragment('{"thresholds": {"open_pr_queue_full": 80}}')
+
+
+def test_validate_score_config_fragment_rejects_local_threshold_conflicts() -> None:
+    with pytest.raises(ScoreConfigError, match="open PR queue thresholds"):
+        validate_score_config_fragment(
+            """
+            {
+              "thresholds": {
+                "open_pr_queue_full": 80,
+                "open_pr_queue_partial": 50
               }
             }
             """

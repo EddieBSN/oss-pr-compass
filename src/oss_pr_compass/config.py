@@ -78,6 +78,20 @@ def parse_score_config(
     source: str = "scoring config",
     base: ScoreConfig | None = None,
 ) -> ScoreConfig:
+    raw = _load_score_config_json(text, source)
+    return config_from_mapping(raw, source=source, base=base)
+
+
+def validate_score_config_fragment(
+    text: str,
+    *,
+    source: str = "scoring config",
+) -> None:
+    raw = _load_score_config_json(text, source)
+    _validate_config_fragment(raw, source)
+
+
+def _load_score_config_json(text: str, source: str) -> object:
     try:
         raw = json.loads(
             text,
@@ -87,7 +101,7 @@ def parse_score_config(
     except json.JSONDecodeError as exc:
         raise ScoreConfigError(f"{source} is not valid JSON: {exc.msg}") from exc
     _reject_duplicate_keys(raw, source)
-    return config_from_mapping(raw, source=source, base=base)
+    return raw
 
 
 def config_from_mapping(
@@ -127,6 +141,30 @@ def config_from_mapping(
         raise ScoreConfigError(f"{source} cannot disable every scoring signal.")
 
     return ScoreConfig(disabled_signals=frozenset(disabled_signals), thresholds=thresholds)
+
+
+def _validate_config_fragment(raw: object, source: str) -> None:
+    if not isinstance(raw, dict):
+        raise ScoreConfigError(f"{source} must be a JSON object.")
+
+    allowed_keys = {"disabled_signals", "disabled_signals_mode", "thresholds"}
+    unknown_keys = sorted(set(raw) - allowed_keys)
+    if unknown_keys:
+        raise ScoreConfigError(f"{source} contains unknown keys: {', '.join(unknown_keys)}.")
+
+    disabled_signals_mode = raw.get("disabled_signals_mode", "merge")
+    if disabled_signals_mode not in {"merge", "replace"}:
+        raise ScoreConfigError(
+            f"{source} disabled_signals_mode must be either 'merge' or 'replace'."
+        )
+
+    if "disabled_signals" in raw:
+        disabled_signals = _parse_disabled_signals(raw["disabled_signals"], source)
+        if len(disabled_signals) == len(SIGNAL_NAMES):
+            raise ScoreConfigError(f"{source} cannot disable every scoring signal.")
+
+    if "thresholds" in raw:
+        _validate_threshold_fragment(raw["thresholds"], source=source)
 
 
 def _parse_disabled_signals(raw: object, source: str) -> frozenset[str]:
@@ -171,6 +209,27 @@ def _parse_thresholds(
     return thresholds
 
 
+def _validate_threshold_fragment(raw: object, *, source: str) -> None:
+    if not isinstance(raw, dict):
+        raise ScoreConfigError(f"{source} thresholds must be a JSON object.")
+
+    field_names = set(ScoreThresholds.__dataclass_fields__)
+    unknown_keys = sorted(set(raw) - field_names)
+    if unknown_keys:
+        raise ScoreConfigError(f"{source} contains unknown thresholds: {', '.join(unknown_keys)}.")
+
+    updates: dict[str, int | float] = {}
+    for key, value in raw.items():
+        if "ratio" in key:
+            updates[key] = _parse_ratio(value, f"{source} thresholds.{key}")
+        elif key == "stale_unanswered_minimum":
+            updates[key] = _parse_non_negative_int(value, f"{source} thresholds.{key}")
+        else:
+            updates[key] = _parse_positive_int(value, f"{source} thresholds.{key}")
+
+    _validate_threshold_fragment_order(updates, source)
+
+
 def _validate_thresholds(thresholds: ScoreThresholds, source: str) -> None:
     if thresholds.recent_activity_full_days > thresholds.recent_activity_partial_days:
         raise ScoreConfigError(
@@ -200,6 +259,92 @@ def _validate_thresholds(thresholds: ScoreThresholds, source: str) -> None:
         raise ScoreConfigError(
             f"{source} maintainer_response_partial_ratio must be <= maintainer_response_full_ratio."
         )
+
+
+def _validate_threshold_fragment_order(updates: dict[str, int | float], source: str) -> None:
+    _validate_ordered_pair(
+        updates,
+        "recent_activity_full_days",
+        "recent_activity_partial_days",
+        source,
+        "recent_activity_full_days must be <= recent_activity_partial_days.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "merged_prs_partial",
+        "merged_prs_full",
+        source,
+        "merged PR thresholds must descend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "merged_prs_minimum",
+        "merged_prs_partial",
+        source,
+        "merged PR thresholds must descend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "merged_prs_minimum",
+        "merged_prs_full",
+        source,
+        "merged PR thresholds must descend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "open_pr_queue_full",
+        "open_pr_queue_partial",
+        source,
+        "open PR queue thresholds must ascend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "open_pr_queue_partial",
+        "open_pr_queue_minimum",
+        source,
+        "open PR queue thresholds must ascend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "open_pr_queue_full",
+        "open_pr_queue_minimum",
+        source,
+        "open PR queue thresholds must ascend from full to minimum.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "open_issue_queue_full",
+        "open_issue_queue_partial",
+        source,
+        "open_issue_queue_full must be <= open_issue_queue_partial.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "issue_label_ratio_partial",
+        "issue_label_ratio_full",
+        source,
+        "issue_label_ratio_partial must be <= issue_label_ratio_full.",
+    )
+    _validate_ordered_pair(
+        updates,
+        "maintainer_response_partial_ratio",
+        "maintainer_response_full_ratio",
+        source,
+        "maintainer_response_partial_ratio must be <= maintainer_response_full_ratio.",
+    )
+
+
+def _validate_ordered_pair(
+    values: dict[str, int | float],
+    lower_field: str,
+    upper_field: str,
+    source: str,
+    message: str,
+) -> None:
+    lower = values.get(lower_field)
+    upper = values.get(upper_field)
+    if lower is not None and upper is not None and lower > upper:
+        raise ScoreConfigError(f"{source} {message}")
 
 
 def _resolve_signal_name(value: str, source: str) -> str:

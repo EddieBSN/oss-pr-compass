@@ -202,6 +202,54 @@ def test_main_rejects_invalid_repository_before_api_paths(monkeypatch, capsys) -
     assert "error: repository must look like" in captured.err
 
 
+def test_main_validates_bad_local_config_before_network_methods(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    class NetworkFailingClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            raise AssertionError("bad local config should fail before snapshot fetch")
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            raise AssertionError("bad local config should fail before remote config fetch")
+
+    bad_config = tmp_path / "bad-score.json"
+    bad_config.write_text('{"thresholds": {"open_pr_queue_full": 0}}', encoding="utf-8")
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NetworkFailingClient)
+
+    assert main(["owner/repo", "--config", str(bad_config)]) == 2
+
+    captured = capsys.readouterr()
+    assert str(bad_config) in captured.err
+    assert "open_pr_queue_full must be a positive integer" in captured.err
+
+
+def test_main_validates_bad_no_remote_local_config_before_snapshot(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    class NetworkFailingClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            raise AssertionError("bad local config should fail before snapshot fetch")
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            raise AssertionError("--no-remote-config should not fetch remote config")
+
+    bad_config = tmp_path / "bad-score.json"
+    bad_config.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NetworkFailingClient)
+
+    assert main(["owner/repo", "--no-remote-config", "--config", str(bad_config)]) == 2
+
+    captured = capsys.readouterr()
+    assert str(bad_config) in captured.err
+    assert "is not valid JSON" in captured.err
+
+
 def test_main_uses_canonical_repository_for_remote_config(monkeypatch, capsys) -> None:
     remote_config_repositories: list[str] = []
 
@@ -392,6 +440,53 @@ def test_main_json_includes_local_over_remote_config_provenance(
     assert provenance["disabled_signals"] == ["CI and test signals"]
     assert provenance["threshold_overrides"] == {"open_pr_queue_full": 30}
     assert provenance["local_config"]["loaded"] is True
+
+
+def test_main_valid_local_config_layers_on_remote_base(monkeypatch, capsys, tmp_path) -> None:
+    class RemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return """
+            {
+              "disabled_signals": ["Pull request template"],
+              "thresholds": {
+                "open_pr_queue_partial": 100
+              }
+            }
+            """
+
+    local_config = tmp_path / "score.json"
+    local_config.write_text(
+        """
+        {
+          "disabled_signals": ["CI and test signals"],
+          "thresholds": {
+            "open_pr_queue_full": 80
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", RemoteConfigClient)
+
+    assert main(["owner/repo", "--json", "--config", str(local_config)]) == 0
+
+    provenance = json.loads(capsys.readouterr().out)["config_provenance"]
+    assert provenance["sources"] == [
+        "defaults",
+        "owner/repo:.oss-pr-compass.json",
+        str(local_config),
+    ]
+    assert provenance["disabled_signals"] == ["CI and test signals", "Pull request template"]
+    assert provenance["threshold_overrides"] == {
+        "open_pr_queue_full": 80,
+        "open_pr_queue_partial": 100,
+    }
 
 
 def test_main_json_discloses_no_remote_config(monkeypatch, capsys) -> None:
