@@ -100,16 +100,24 @@ def config_from_mapping(
         raise ScoreConfigError(f"{source} must be a JSON object.")
 
     base = base or ScoreConfig()
-    allowed_keys = {"disabled_signals", "thresholds"}
+    allowed_keys = {"disabled_signals", "disabled_signals_mode", "thresholds"}
     unknown_keys = sorted(set(raw) - allowed_keys)
     if unknown_keys:
         raise ScoreConfigError(f"{source} contains unknown keys: {', '.join(unknown_keys)}.")
 
+    disabled_signals_mode = raw.get("disabled_signals_mode", "merge")
+    if disabled_signals_mode not in {"merge", "replace"}:
+        raise ScoreConfigError(
+            f"{source} disabled_signals_mode must be either 'merge' or 'replace'."
+        )
+
     disabled_signals = base.disabled_signals
     if "disabled_signals" in raw:
-        disabled_signals = disabled_signals | _parse_disabled_signals(
-            raw["disabled_signals"], source
-        )
+        parsed_disabled_signals = _parse_disabled_signals(raw["disabled_signals"], source)
+        if disabled_signals_mode == "replace":
+            disabled_signals = parsed_disabled_signals
+        else:
+            disabled_signals = disabled_signals | parsed_disabled_signals
 
     thresholds = base.thresholds
     if "thresholds" in raw:

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from oss_pr_compass.config import ScoreConfig
 from oss_pr_compass.model import (
     Assessment,
+    ConfigProvenance,
     IssueSnapshot,
     Recommendation,
     RepositorySnapshot,
@@ -46,6 +47,7 @@ def assess_repository(
     days: int = 90,
     now: datetime | None = None,
     config: ScoreConfig | None = None,
+    config_provenance: ConfigProvenance | None = None,
 ) -> Assessment:
     now = now or datetime.now(timezone.utc)
     config = config or ScoreConfig()
@@ -105,6 +107,7 @@ def assess_repository(
         signals=signals,
         recommendations=recommendations,
         recommendation_details=recommendation_details,
+        config_provenance=config_provenance,
     )
 
 

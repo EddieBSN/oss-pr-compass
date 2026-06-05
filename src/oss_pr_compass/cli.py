@@ -12,11 +12,12 @@ from oss_pr_compass.analysis import assess_repository
 from oss_pr_compass.config import (
     ScoreConfig,
     ScoreConfigError,
+    ScoreThresholds,
     load_score_config,
     parse_score_config,
 )
 from oss_pr_compass.github import GitHubClient, GitHubError, parse_repository
-from oss_pr_compass.model import Assessment, Signal
+from oss_pr_compass.model import Assessment, ConfigProvenance, Signal
 
 VERDICT_RANK = {"needs-work": 0, "promising": 1, "strong": 2}
 
@@ -92,12 +93,23 @@ def main(argv: list[str] | None = None) -> int:
             requested_repository,
             merged_since=now - timedelta(days=args.days),
         )
-        config = _load_score_config(client, snapshot.full_name, args.config, args.no_remote_config)
+        config, config_provenance = _load_score_config(
+            client,
+            snapshot.full_name,
+            args.config,
+            args.no_remote_config,
+        )
     except (GitHubError, ScoreConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    assessment = assess_repository(snapshot, days=args.days, now=now, config=config)
+    assessment = assess_repository(
+        snapshot,
+        days=args.days,
+        now=now,
+        config=config,
+        config_provenance=config_provenance,
+    )
 
     if args.github_step_summary is not None:
         try:
@@ -132,9 +144,10 @@ def format_assessment(assessment: Assessment) -> str:
         f"Repository: {assessment.repository}",
         f"URL: {assessment.url}",
         f"Score: {assessment.score}/{assessment.max_score} ({assessment.verdict})",
-        "",
-        "Signals:",
     ]
+    if assessment.config_provenance is not None:
+        lines.append(f"Config: {_config_provenance_detail(assessment.config_provenance)}")
+    lines.extend(["", "Signals:"])
     for signal in assessment.signals:
         if signal.points == signal.max_points:
             marker = "PASS"
@@ -176,10 +189,16 @@ def format_markdown(assessment: Assessment) -> str:
         else f"Repository: {_escape_markdown_inline(assessment.url)}",
         "",
         f"**Score:** {assessment.score}/{assessment.max_score} (`{assessment.verdict}`)",
-        "",
-        "| Signal | Result | Score | Detail |",
-        "| --- | --- | ---: | --- |",
     ]
+    if assessment.config_provenance is not None:
+        lines.extend(
+            [
+                "",
+                "**Config:** "
+                + _escape_markdown_inline(_config_provenance_detail(assessment.config_provenance)),
+            ]
+        )
+    lines.extend(["", "| Signal | Result | Score | Detail |", "| --- | --- | ---: | --- |"])
     for signal in assessment.signals:
         lines.append(
             "| "
@@ -224,21 +243,40 @@ def _load_score_config(
     repository: str,
     local_config_path: str | None,
     no_remote_config: bool,
-) -> ScoreConfig:
+) -> tuple[ScoreConfig, ConfigProvenance]:
     config = ScoreConfig()
+    sources = ["defaults"]
+    remote_config_source = f"{repository}:.oss-pr-compass.json"
+    remote_config_loaded = False
     if not no_remote_config:
         remote_config = client.fetch_file_text(repository, ".oss-pr-compass.json")
         if remote_config is not None:
             config = parse_score_config(
                 remote_config,
-                source=f"{repository}:.oss-pr-compass.json",
+                source=remote_config_source,
                 base=config,
             )
+            sources.append(remote_config_source)
+            remote_config_loaded = True
 
+    local_config_source = None
+    local_config_loaded = False
     if local_config_path:
-        config = load_score_config(local_config_path, base=config)
+        local_config_source = str(Path(local_config_path))
+        config = load_score_config(local_config_source, base=config)
+        sources.append(local_config_source)
+        local_config_loaded = True
 
-    return config
+    return config, ConfigProvenance(
+        sources=tuple(sources),
+        remote_config_source=remote_config_source,
+        remote_config_loaded=remote_config_loaded,
+        remote_config_ignored=no_remote_config,
+        local_config_source=local_config_source,
+        local_config_loaded=local_config_loaded,
+        disabled_signals=tuple(_ordered_disabled_signals(config)),
+        threshold_overrides=_threshold_overrides(config),
+    )
 
 
 def _github_step_summary_path(value: str) -> Path:
@@ -257,6 +295,33 @@ def _signal_marker(signal: Signal) -> str:
     if signal.passed:
         return "PART"
     return "MISS"
+
+
+def _ordered_disabled_signals(config: ScoreConfig) -> list[str]:
+    return sorted(config.disabled_signals)
+
+
+def _threshold_overrides(config: ScoreConfig) -> dict[str, int | float]:
+    defaults = ScoreThresholds()
+    overrides: dict[str, int | float] = {}
+    for name in ScoreThresholds.__dataclass_fields__:
+        value = getattr(config.thresholds, name)
+        if value != getattr(defaults, name):
+            overrides[name] = value
+    return overrides
+
+
+def _config_provenance_detail(provenance: ConfigProvenance) -> str:
+    parts = [f"sources: {', '.join(provenance.sources)}"]
+    if provenance.remote_config_ignored:
+        parts.append("remote config ignored")
+    if provenance.disabled_signals:
+        parts.append(f"disabled signals: {', '.join(provenance.disabled_signals)}")
+    overrides = provenance.threshold_overrides or {}
+    if overrides:
+        threshold_text = ", ".join(f"{key}={value}" for key, value in overrides.items())
+        parts.append(f"threshold overrides: {threshold_text}")
+    return "; ".join(parts) + "."
 
 
 def _signal_detail_for_output(signal: Signal) -> str:

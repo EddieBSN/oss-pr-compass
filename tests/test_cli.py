@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from oss_pr_compass.cli import _policy_failure_reason, format_assessment, format_markdown, main
 from oss_pr_compass.github import GitHubError
 from oss_pr_compass.model import Assessment, Recommendation, RepositorySnapshot, Signal
@@ -310,3 +312,149 @@ def test_main_reports_duplicate_remote_config_keys(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert "error:" in captured.err
     assert "duplicate key 'thresholds.open_pr_queue_full'" in captured.err
+
+
+def test_main_json_includes_remote_config_provenance(monkeypatch, capsys) -> None:
+    class RemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return """
+            {
+              "disabled_signals": ["Pull request template"],
+              "thresholds": {
+                "open_pr_queue_full": 25
+              }
+            }
+            """
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", RemoteConfigClient)
+
+    assert main(["owner/repo", "--json"]) == 0
+
+    data = json.loads(capsys.readouterr().out)
+    provenance = data["config_provenance"]
+    assert provenance["sources"] == ["defaults", "owner/repo:.oss-pr-compass.json"]
+    assert provenance["remote_config"]["loaded"] is True
+    assert provenance["remote_config"]["ignored"] is False
+    assert provenance["local_config"]["loaded"] is False
+    assert provenance["disabled_signals"] == ["Pull request template"]
+    assert provenance["threshold_overrides"] == {"open_pr_queue_full": 25}
+
+
+def test_main_json_includes_local_over_remote_config_provenance(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    class RemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return """
+            {
+              "disabled_signals": ["Pull request template"],
+              "thresholds": {
+                "open_pr_queue_full": 20
+              }
+            }
+            """
+
+    local_config = tmp_path / "score.json"
+    local_config.write_text(
+        """
+        {
+          "disabled_signals_mode": "replace",
+          "disabled_signals": ["CI and test signals"],
+          "thresholds": {
+            "open_pr_queue_full": 30
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", RemoteConfigClient)
+
+    assert main(["owner/repo", "--json", "--config", str(local_config)]) == 0
+
+    provenance = json.loads(capsys.readouterr().out)["config_provenance"]
+    assert provenance["sources"] == [
+        "defaults",
+        "owner/repo:.oss-pr-compass.json",
+        str(local_config),
+    ]
+    assert provenance["disabled_signals"] == ["CI and test signals"]
+    assert provenance["threshold_overrides"] == {"open_pr_queue_full": 30}
+    assert provenance["local_config"]["loaded"] is True
+
+
+def test_main_json_discloses_no_remote_config(monkeypatch, capsys) -> None:
+    class NoRemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            raise AssertionError("remote config should not be fetched")
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NoRemoteConfigClient)
+
+    assert main(["owner/repo", "--json", "--no-remote-config"]) == 0
+
+    provenance = json.loads(capsys.readouterr().out)["config_provenance"]
+    assert provenance["sources"] == ["defaults"]
+    assert provenance["remote_config"]["ignored"] is True
+    assert provenance["remote_config"]["loaded"] is False
+
+
+def test_main_text_and_markdown_include_config_provenance(monkeypatch, capsys) -> None:
+    class RemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return '{"thresholds": {"open_pr_queue_full": 25}}'
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", RemoteConfigClient)
+
+    assert main(["owner/repo"]) == 0
+    text_output = capsys.readouterr().out
+    assert "Config:" in text_output
+    assert "owner/repo:.oss-pr-compass.json" in text_output
+    assert "open_pr_queue_full=25" in text_output
+
+    assert main(["owner/repo", "--markdown"]) == 0
+    markdown_output = capsys.readouterr().out
+    assert "**Config:**" in markdown_output
+    assert "owner/repo:.oss-pr-compass.json" in markdown_output
+    assert "open\\_pr\\_queue\\_full=25" in markdown_output
+
+
+def _basic_snapshot() -> RepositorySnapshot:
+    return RepositorySnapshot(
+        full_name="owner/repo",
+        html_url="https://github.com/owner/repo",
+        description="Example",
+        stars=1,
+        forks=2,
+        archived=False,
+        pushed_at=None,
+        default_branch="main",
+        license_spdx="MIT",
+        topics=("python",),
+        root_entries=frozenset({"README.md", "CONTRIBUTING.md"}),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=(),
+        open_pr_count=0,
+    )

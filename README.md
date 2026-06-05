@@ -162,12 +162,19 @@ coverage and maintainer response evidence is reported as no-data instead of full
 
 Repositories can include `.oss-pr-compass.json` at the repository root to tune thresholds or disable signals that do
 not apply to their governance model. Local config can be layered on top with `--config`, and remote config can be
-ignored with `--no-remote-config`.
+ignored with `--no-remote-config`. Output always reports config provenance: defaults, whether remote config was loaded
+or ignored, the local config path when supplied, final disabled signals, and threshold overrides from the baseline
+defaults. JSON exposes this under `config_provenance`; text and Markdown include the same summary as `Config`.
+
+By default, local `disabled_signals` are merged with any remote-disabled signals. To score against a local baseline
+instead of a target-repo-tuned disabled-signal list, set `"disabled_signals_mode": "replace"` in the local config. Local
+threshold values always override earlier remote threshold values for the same key.
 
 Example:
 
 ```json
 {
+  "disabled_signals_mode": "merge",
   "disabled_signals": ["Pull request template"],
   "thresholds": {
     "recent_activity_full_days": 60,
@@ -183,10 +190,11 @@ Example:
 }
 ```
 
-Unknown keys are rejected so configuration mistakes are visible in CI.
+Unknown keys and duplicate keys are rejected so configuration mistakes are visible in CI.
 
 Accepted `disabled_signals` values are the signal names from the scoring table. The parser also accepts lowercase,
-dash-separated, or underscore-separated aliases such as `pull_request_template`.
+dash-separated, or underscore-separated aliases such as `pull_request_template`. Accepted `disabled_signals_mode` values
+are `merge` and `replace`; omit it for `merge`.
 
 Supported threshold keys:
 

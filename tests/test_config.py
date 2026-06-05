@@ -109,6 +109,22 @@ def test_parse_score_config_layers_disabled_signals_over_base() -> None:
     assert config.disabled_signals == frozenset({"Pull request template", "CI and test signals"})
 
 
+def test_parse_score_config_can_replace_base_disabled_signals() -> None:
+    base = parse_score_config('{"disabled_signals": ["Pull request template"]}')
+
+    config = parse_score_config(
+        """
+        {
+          "disabled_signals_mode": "replace",
+          "disabled_signals": ["CI and test signals"]
+        }
+        """,
+        base=base,
+    )
+
+    assert config.disabled_signals == frozenset({"CI and test signals"})
+
+
 def test_parse_score_config_rejects_non_finite_ratio_values() -> None:
     with pytest.raises(ScoreConfigError, match="unsupported JSON constant NaN"):
         parse_score_config('{"thresholds": {"issue_label_ratio_full": NaN}}')
