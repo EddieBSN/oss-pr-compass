@@ -275,3 +275,38 @@ def test_main_reports_malformed_github_payload_without_traceback(monkeypatch, ca
     captured = capsys.readouterr()
     assert "error: Expected string for labels[0].name" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_main_reports_duplicate_remote_config_keys(monkeypatch, capsys) -> None:
+    class DuplicateRemoteConfigClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return RepositorySnapshot(
+                full_name="owner/repo",
+                html_url="https://github.com/owner/repo",
+                description="Example",
+                stars=1,
+                forks=2,
+                archived=False,
+                pushed_at=None,
+                default_branch="main",
+                license_spdx="MIT",
+                topics=("python",),
+                root_entries=frozenset({"README.md"}),
+                workflow_entries=frozenset(),
+                merged_prs=(),
+                open_pr_count=0,
+            )
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return '{"thresholds": {"open_pr_queue_full": 10, "open_pr_queue_full": 20}}'
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", DuplicateRemoteConfigClient)
+
+    assert main(["owner/repo"]) == 2
+
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "duplicate key 'thresholds.open_pr_queue_full'" in captured.err

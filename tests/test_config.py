@@ -38,6 +38,52 @@ def test_parse_score_config_rejects_unknown_thresholds() -> None:
         )
 
 
+def test_parse_score_config_rejects_duplicate_top_level_keys() -> None:
+    with pytest.raises(ScoreConfigError, match="duplicate key 'thresholds'"):
+        parse_score_config(
+            """
+            {
+              "thresholds": {
+                "recent_activity_full_days": 60
+              },
+              "thresholds": {
+                "recent_activity_full_days": 30
+              }
+            }
+            """
+        )
+
+
+def test_parse_score_config_rejects_duplicate_nested_threshold_keys() -> None:
+    with pytest.raises(ScoreConfigError, match="thresholds.open_pr_queue_full"):
+        parse_score_config(
+            """
+            {
+              "thresholds": {
+                "open_pr_queue_full": 10,
+                "open_pr_queue_full": 20
+              }
+            }
+            """
+        )
+
+
+def test_parse_score_config_accepts_non_duplicate_nested_keys() -> None:
+    config = parse_score_config(
+        """
+        {
+          "thresholds": {
+            "open_pr_queue_full": 10,
+            "open_pr_queue_partial": 50
+          }
+        }
+        """
+    )
+
+    assert config.thresholds.open_pr_queue_full == 10
+    assert config.thresholds.open_pr_queue_partial == 50
+
+
 def test_parse_score_config_rejects_invalid_threshold_order() -> None:
     with pytest.raises(ScoreConfigError, match="recent_activity_full_days"):
         parse_score_config(
