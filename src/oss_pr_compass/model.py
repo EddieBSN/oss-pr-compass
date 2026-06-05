@@ -79,6 +79,34 @@ class Signal:
 
 
 @dataclass(frozen=True)
+class ConfigProvenance:
+    sources: tuple[str, ...]
+    remote_config_source: str | None = None
+    remote_config_loaded: bool = False
+    remote_config_ignored: bool = False
+    local_config_source: str | None = None
+    local_config_loaded: bool = False
+    disabled_signals: tuple[str, ...] = ()
+    threshold_overrides: dict[str, int | float] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sources": list(self.sources),
+            "remote_config": {
+                "source": self.remote_config_source,
+                "loaded": self.remote_config_loaded,
+                "ignored": self.remote_config_ignored,
+            },
+            "local_config": {
+                "source": self.local_config_source,
+                "loaded": self.local_config_loaded,
+            },
+            "disabled_signals": list(self.disabled_signals),
+            "threshold_overrides": dict(self.threshold_overrides or {}),
+        }
+
+
+@dataclass(frozen=True)
 class Recommendation:
     id: str
     signal: str
@@ -110,9 +138,10 @@ class Assessment:
     signals: tuple[Signal, ...]
     recommendations: tuple[str, ...]
     recommendation_details: tuple[Recommendation, ...] = ()
+    config_provenance: ConfigProvenance | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "repository": self.repository,
             "url": self.url,
             "score": self.score,
@@ -124,3 +153,6 @@ class Assessment:
                 recommendation.to_dict() for recommendation in self.recommendation_details
             ],
         }
+        if self.config_provenance is not None:
+            data["config_provenance"] = self.config_provenance.to_dict()
+        return data
