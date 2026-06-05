@@ -139,11 +139,13 @@ class Assessment:
     recommendations: tuple[str, ...]
     recommendation_details: tuple[Recommendation, ...] = ()
     config_provenance: ConfigProvenance | None = None
+    archived: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         data = {
             "repository": self.repository,
             "url": self.url,
+            "archived": self.archived,
             "score": self.score,
             "max_score": self.max_score,
             "verdict": self.verdict,

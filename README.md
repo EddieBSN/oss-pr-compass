@@ -106,9 +106,11 @@ oss-pr-compass pypa/pipx --fail-on-verdict needs-work
 oss-pr-compass pypa/pipx --fail-under 75 --warn-only
 ```
 
-`--fail-under` checks the normalized score from 0 to 100. `--fail-on-verdict` accepts `needs-work` or `promising` and
-fails when the verdict is the selected value or lower, so `needs-work` fails only `needs-work`, while `promising` fails
-both `promising` and `needs-work`.
+`--fail-under` checks the normalized score from 0 to 100. For archived repositories, it also fails if the final verdict
+is `needs-work`, even when the numeric score clears the threshold. That keeps archived repositories from passing a
+readiness gate by score alone.
+`--fail-on-verdict` accepts `needs-work` or `promising` and fails when the verdict is the selected value or lower, so
+`needs-work` fails only `needs-work`, while `promising` fails both `promising` and `needs-work`.
 `--warn-only` requires `--fail-under` or `--fail-on-verdict` and prints policy-gate failures to stderr without changing
 the exit status.
 
