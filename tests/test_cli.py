@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -186,6 +187,44 @@ def test_assessment_json_serializes_full_partial_and_miss_signal_results() -> No
         (7, 14),
         (0, 10),
     ]
+
+
+def test_assessment_json_includes_schema_version_and_stable_signal_ids() -> None:
+    assessment = Assessment(
+        repository="owner/repo",
+        url="https://github.com/owner/repo",
+        score=20,
+        max_score=30,
+        verdict="promising",
+        signals=(
+            Signal("OSS license", 12, 12, "Detected MIT."),
+            Signal("Issue triage signals", 8, 12, "Most sampled issues are labeled."),
+        ),
+        recommendations=(),
+    )
+
+    data = assessment.to_dict()
+
+    assert data["schema_version"] == 1
+    assert [signal["id"] for signal in data["signals"]] == [
+        "oss_license",
+        "issue_triage_signals",
+    ]
+    assert [signal["name"] for signal in data["signals"]] == [
+        "OSS license",
+        "Issue triage signals",
+    ]
+
+
+def test_readme_documents_json_compatibility_contract() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    normalized_readme = readme.lower()
+
+    assert "schema_version" in readme
+    assert "additive fields" in normalized_readme
+    assert "removals" in normalized_readme
+    assert "renames" in normalized_readme
+    assert "semantic changes" in normalized_readme
 
 
 def test_policy_failure_reason_checks_score_and_verdict() -> None:
@@ -723,6 +762,52 @@ def test_main_json_includes_remote_config_provenance(monkeypatch, capsys) -> Non
     assert provenance["local_config"]["loaded"] is False
     assert provenance["disabled_signals"] == ["Pull request template"]
     assert provenance["threshold_overrides"] == {"open_pr_queue_full": 25}
+
+
+def test_main_json_includes_schema_version_signal_ids_and_existing_fields(
+    monkeypatch, capsys
+) -> None:
+    class JsonShapeClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", JsonShapeClient)
+
+    assert main(["owner/repo", "--json"]) == 0
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema_version"] == 1
+    assert {
+        "schema_version",
+        "repository",
+        "url",
+        "archived",
+        "score",
+        "max_score",
+        "verdict",
+        "signals",
+        "recommendations",
+        "recommendation_details",
+        "config_provenance",
+    }.issubset(data)
+
+    first_signal = data["signals"][0]
+    assert {
+        "id",
+        "name",
+        "result",
+        "passed",
+        "points",
+        "max_points",
+        "detail",
+        "confidence",
+    }.issubset(first_signal)
 
 
 def test_main_json_includes_local_over_remote_config_provenance(

@@ -4,6 +4,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+ASSESSMENT_SCHEMA_VERSION = 1
+SIGNAL_IDS_BY_NAME = {
+    "OSS license": "oss_license",
+    "Recent repository activity": "recent_repository_activity",
+    "Merged pull request activity": "merged_pull_request_activity",
+    "Contribution documentation": "contribution_documentation",
+    "Pull request template": "pull_request_template",
+    "CI and test signals": "ci_and_test_signals",
+    "Open pull request queue": "open_pull_request_queue",
+    "Issue triage signals": "issue_triage_signals",
+}
+
 
 @dataclass(frozen=True)
 class IssueSnapshot:
@@ -61,6 +73,10 @@ class Signal:
         return self.points > 0
 
     @property
+    def id(self) -> str:
+        return SIGNAL_IDS_BY_NAME.get(self.name, _fallback_signal_id(self.name))
+
+    @property
     def result(self) -> str:
         if self.points >= self.max_points:
             return "pass"
@@ -70,6 +86,7 @@ class Signal:
 
     def to_dict(self) -> dict[str, Any]:
         data = {
+            "id": self.id,
             "name": self.name,
             "result": self.result,
             "passed": self.passed,
@@ -152,6 +169,7 @@ class Assessment:
 
     def to_dict(self) -> dict[str, Any]:
         data = {
+            "schema_version": ASSESSMENT_SCHEMA_VERSION,
             "repository": self.repository,
             "url": self.url,
             "archived": self.archived,
@@ -167,3 +185,9 @@ class Assessment:
         if self.config_provenance is not None:
             data["config_provenance"] = self.config_provenance.to_dict()
         return data
+
+
+def _fallback_signal_id(name: str) -> str:
+    normalized = name.strip().lower().replace("&", " and ")
+    chars = [char if char.isalnum() else "_" for char in normalized]
+    return "_".join("".join(chars).split("_")).strip("_") or "unknown_signal"
