@@ -153,6 +153,41 @@ def test_format_outputs_include_no_data_issue_triage_confidence() -> None:
     assert "no open issues" in markdown
 
 
+def test_partial_signal_json_result_is_distinct_from_full_pass() -> None:
+    partial = Signal("CI and test signals", 7, 14, "CI workflows, no tests directory.")
+    full = Signal("OSS license", 12, 12, "Detected MIT.")
+
+    assert partial.to_dict()["result"] == "partial"
+    assert full.to_dict()["result"] == "pass"
+    assert partial.to_dict()["passed"] is True
+    assert partial.to_dict()["result"] != full.to_dict()["result"]
+
+
+def test_assessment_json_serializes_full_partial_and_miss_signal_results() -> None:
+    assessment = Assessment(
+        repository="owner/repo",
+        url="https://github.com/owner/repo",
+        score=19,
+        max_score=36,
+        verdict="needs-work",
+        signals=(
+            Signal("OSS license", 12, 12, "Detected MIT."),
+            Signal("CI and test signals", 7, 14, "CI workflows, no tests directory."),
+            Signal("Pull request template", 0, 10, "No pull request template found."),
+        ),
+        recommendations=(),
+    )
+
+    signals = assessment.to_dict()["signals"]
+
+    assert [signal["result"] for signal in signals] == ["pass", "partial", "miss"]
+    assert [(signal["points"], signal["max_points"]) for signal in signals] == [
+        (12, 12),
+        (7, 14),
+        (0, 10),
+    ]
+
+
 def test_policy_failure_reason_checks_score_and_verdict() -> None:
     assessment = Assessment(
         repository="owner/repo",

@@ -168,12 +168,7 @@ def format_assessment(assessment: Assessment) -> str:
         lines.append(f"Config: {_config_provenance_detail(assessment.config_provenance)}")
     lines.extend(["", "Signals:"])
     for signal in assessment.signals:
-        if signal.points == signal.max_points:
-            marker = "PASS"
-        elif signal.passed:
-            marker = "PART"
-        else:
-            marker = "MISS"
+        marker = _signal_marker(signal)
         lines.append(
             f"- {marker} {signal.name}: {signal.points}/{signal.max_points} - "
             f"{_signal_detail_for_output(signal)}"
@@ -330,9 +325,9 @@ def _github_step_summary_path(value: str) -> Path:
 
 
 def _signal_marker(signal: Signal) -> str:
-    if signal.points == signal.max_points:
+    if signal.result == "pass":
         return "PASS"
-    if signal.passed:
+    if signal.result == "partial":
         return "PART"
     return "MISS"
 

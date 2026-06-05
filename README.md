@@ -115,8 +115,10 @@ readiness gate by score alone.
 the exit status.
 
 JSON output includes both `recommendations` and `recommendation_details`. The detailed form includes priority, points
-lost, why the signal matters, the next action, and evidence from the underlying signal. Signals may also include
-`confidence`, `sampled`, `sample_size`, and `sample_total` when a large repository requires sampled issue triage.
+lost, why the signal matters, the next action, and evidence from the underlying signal. Each JSON signal includes
+`result` as `pass`, `partial`, or `miss`; `passed` remains a compatibility flag for non-zero scores, so use `result`
+when distinguishing full credit from partial credit. Signals may also include `confidence`, `sampled`, `sample_size`,
+and `sample_total` when a large repository requires sampled issue triage.
 
 ## Scoring
 

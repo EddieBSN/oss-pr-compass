@@ -60,9 +60,18 @@ class Signal:
     def passed(self) -> bool:
         return self.points > 0
 
+    @property
+    def result(self) -> str:
+        if self.points >= self.max_points:
+            return "pass"
+        if self.points > 0:
+            return "partial"
+        return "miss"
+
     def to_dict(self) -> dict[str, Any]:
         data = {
             "name": self.name,
+            "result": self.result,
             "passed": self.passed,
             "points": self.points,
             "max_points": self.max_points,
