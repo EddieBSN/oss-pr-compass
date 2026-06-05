@@ -74,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--warn-only",
         action="store_true",
-        help="Print policy failures as warnings without changing the exit status.",
+        help=(
+            "Print policy-gate failures as warnings without changing the exit status. "
+            "Requires --fail-under or --fail-on-verdict."
+        ),
     )
     parser.add_argument(
         "--token", default=os.getenv("GITHUB_TOKEN"), help="GitHub token for higher API limits."
@@ -93,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--days must be at most {MAX_DATE_WINDOW_DAYS}")
     if args.fail_under is not None and not 0 <= args.fail_under <= 100:
         parser.error("--fail-under must be between 0 and 100")
+    if args.warn_only and args.fail_under is None and args.fail_on_verdict is None:
+        parser.error("--warn-only requires --fail-under or --fail-on-verdict")
 
     try:
         owner, name = parse_repository(args.repository)

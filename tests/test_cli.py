@@ -224,6 +224,112 @@ def test_main_accepts_maximum_days_boundary(monkeypatch, capsys) -> None:
     assert f"{MAX_DATE_WINDOW_DAYS} days" in captured.out
 
 
+def test_main_rejects_warn_only_without_policy_gate_before_network(monkeypatch, capsys) -> None:
+    class NetworkFailingClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            raise AssertionError("--warn-only validation should fail before GitHub client creation")
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NetworkFailingClient)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["owner/repo", "--warn-only"])
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "--warn-only requires --fail-under or --fail-on-verdict" in captured.err
+
+
+def test_main_warn_only_allows_fail_under_policy_warning(monkeypatch, capsys) -> None:
+    class PolicyClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", PolicyClient)
+
+    assert main(["owner/repo", "--warn-only", "--fail-under", "100"]) == 0
+
+    captured = capsys.readouterr()
+    assert "warning: oss-pr-compass policy failed: score" in captured.err
+
+
+def test_main_warn_only_allows_fail_on_verdict_policy_warning(monkeypatch, capsys) -> None:
+    class PolicyClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", PolicyClient)
+
+    assert main(["owner/repo", "--warn-only", "--fail-on-verdict", "needs-work"]) == 0
+
+    captured = capsys.readouterr()
+    assert "warning: oss-pr-compass policy failed: verdict" in captured.err
+
+
+def test_main_warn_only_allows_both_policy_gates(monkeypatch, capsys) -> None:
+    class PolicyClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", PolicyClient)
+
+    assert (
+        main(
+            [
+                "owner/repo",
+                "--warn-only",
+                "--fail-under",
+                "100",
+                "--fail-on-verdict",
+                "needs-work",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert "warning: oss-pr-compass policy failed:" in captured.err
+    assert "score" in captured.err
+    assert "verdict" in captured.err
+
+
+def test_main_without_warn_only_and_without_policy_gate_is_unchanged(monkeypatch, capsys) -> None:
+    class NormalClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NormalClient)
+
+    assert main(["owner/repo"]) == 0
+
+    captured = capsys.readouterr()
+    assert "Repository: owner/repo" in captured.out
+    assert captured.err == ""
+
+
 def test_main_rejects_invalid_repository_before_api_paths(monkeypatch, capsys) -> None:
     class InvalidInputClient:
         def __init__(self, *, token: str | None, api_url: str) -> None:
