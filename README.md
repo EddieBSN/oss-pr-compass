@@ -120,6 +120,13 @@ lost, why the signal matters, the next action, and evidence from the underlying 
 when distinguishing full credit from partial credit. Signals may also include `confidence`, `sampled`, `sample_size`,
 and `sample_total` when a large repository requires sampled issue triage.
 
+### JSON Compatibility
+
+Machine-readable output includes a top-level `schema_version`. Schema version `1` preserves existing top-level fields
+and adds stable signal `id` values alongside human-facing signal `name` labels. Additive fields may appear within the
+same schema version. Field removals, field renames, or semantic changes to existing fields require a `schema_version`
+bump and release notes that describe the breaking change.
+
 ## Scoring
 
 The score is intentionally simple and inspectable:
