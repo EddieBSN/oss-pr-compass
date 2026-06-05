@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,13 +14,19 @@ from oss_pr_compass.config import (
     ScoreConfig,
     ScoreConfigError,
     ScoreThresholds,
-    load_score_config,
     parse_score_config,
+    validate_score_config_fragment,
 )
 from oss_pr_compass.github import GitHubClient, GitHubError, parse_repository
 from oss_pr_compass.model import Assessment, ConfigProvenance, Signal
 
 VERDICT_RANK = {"needs-work": 0, "promising": 1, "strong": 2}
+
+
+@dataclass(frozen=True)
+class _LocalScoreConfig:
+    source: str
+    text: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         owner, name = parse_repository(args.repository)
         requested_repository = f"{owner}/{name}"
+        local_config = _read_local_score_config(
+            args.config,
+            no_remote_config=args.no_remote_config,
+        )
         now = datetime.now(timezone.utc)
         client = GitHubClient(token=args.token, api_url=args.api_url)
         snapshot = client.fetch_snapshot(
@@ -96,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         config, config_provenance = _load_score_config(
             client,
             snapshot.full_name,
-            args.config,
+            local_config,
             args.no_remote_config,
         )
     except (GitHubError, ScoreConfigError, ValueError) as exc:
@@ -241,7 +252,7 @@ def format_markdown(assessment: Assessment) -> str:
 def _load_score_config(
     client: GitHubClient,
     repository: str,
-    local_config_path: str | None,
+    local_config: _LocalScoreConfig | None,
     no_remote_config: bool,
 ) -> tuple[ScoreConfig, ConfigProvenance]:
     config = ScoreConfig()
@@ -261,9 +272,9 @@ def _load_score_config(
 
     local_config_source = None
     local_config_loaded = False
-    if local_config_path:
-        local_config_source = str(Path(local_config_path))
-        config = load_score_config(local_config_source, base=config)
+    if local_config is not None:
+        local_config_source = local_config.source
+        config = parse_score_config(local_config.text, source=local_config.source, base=config)
         sources.append(local_config_source)
         local_config_loaded = True
 
@@ -277,6 +288,27 @@ def _load_score_config(
         disabled_signals=tuple(_ordered_disabled_signals(config)),
         threshold_overrides=_threshold_overrides(config),
     )
+
+
+def _read_local_score_config(
+    local_config_path: str | None,
+    *,
+    no_remote_config: bool,
+) -> _LocalScoreConfig | None:
+    if not local_config_path:
+        return None
+
+    config_path = Path(local_config_path)
+    source = str(config_path)
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ScoreConfigError(f"Could not read scoring config {source}: {exc}") from exc
+    if no_remote_config:
+        parse_score_config(text, source=source)
+    else:
+        validate_score_config_fragment(text, source=source)
+    return _LocalScoreConfig(source=source, text=text)
 
 
 def _github_step_summary_path(value: str) -> Path:
