@@ -68,8 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--fail-on-verdict",
-        choices=("strong", "promising", "needs-work"),
-        help="Exit with status 1 when the verdict is this value or lower.",
+        choices=("needs-work", "promising"),
+        help=("Exit with status 1 when the verdict is at or below this low-readiness threshold."),
     )
     parser.add_argument(
         "--warn-only",
