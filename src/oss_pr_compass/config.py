@@ -22,6 +22,19 @@ class ScoreConfigError(ValueError):
     pass
 
 
+class _ConfigObject(dict[str, Any]):
+    def __init__(self, pairs: list[tuple[str, Any]]):
+        super().__init__()
+        seen: set[str] = set()
+        duplicates = []
+        for key, value in pairs:
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+            self[key] = value
+        self.duplicate_keys = tuple(duplicates)
+
+
 @dataclass(frozen=True)
 class ScoreThresholds:
     recent_activity_full_days: int = 45
@@ -69,9 +82,11 @@ def parse_score_config(
         raw = json.loads(
             text,
             parse_constant=lambda value: _reject_json_constant(value, source),
+            object_pairs_hook=_ConfigObject,
         )
     except json.JSONDecodeError as exc:
         raise ScoreConfigError(f"{source} is not valid JSON: {exc.msg}") from exc
+    _reject_duplicate_keys(raw, source)
     return config_from_mapping(raw, source=source, base=base)
 
 
@@ -222,3 +237,17 @@ def _parse_ratio(value: Any, field_name: str) -> float:
 
 def _reject_json_constant(value: str, source: str) -> None:
     raise ScoreConfigError(f"{source} contains unsupported JSON constant {value}.")
+
+
+def _reject_duplicate_keys(value: object, source: str, path: str = "") -> None:
+    if isinstance(value, _ConfigObject):
+        if value.duplicate_keys:
+            duplicate = value.duplicate_keys[0]
+            key_path = f"{path}.{duplicate}" if path else duplicate
+            raise ScoreConfigError(f"{source} contains duplicate key {key_path!r}.")
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else key
+            _reject_duplicate_keys(child, source, child_path)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_duplicate_keys(item, source, f"{path}[{index}]")

@@ -217,7 +217,7 @@ Supported threshold keys:
 - Rate limits: set `GITHUB_TOKEN` or pass `--token` for higher GitHub API limits.
 - Missing step summary: `--github-step-summary` needs a path when `GITHUB_STEP_SUMMARY` is not set.
 - Policy failure: use `--warn-only` while tuning thresholds before enforcing `--fail-under` or `--fail-on-verdict`.
-- Invalid config: `.oss-pr-compass.json` must be strict JSON with only supported keys.
+- Invalid config: `.oss-pr-compass.json` must be strict JSON with only supported keys and no duplicate keys.
 - Unknown thresholds or signals: check the tables above for accepted names.
 - GitHub 404s: confirm the repository is public and the API token can read it.
 - Malformed GitHub API data: `oss-pr-compass` exits with `error:` and field context instead of a traceback.
