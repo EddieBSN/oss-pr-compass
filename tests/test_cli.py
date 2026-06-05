@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -212,6 +213,28 @@ def test_policy_failure_reason_verdict_threshold_truth_table() -> None:
         assert (reason is not None) is should_fail
 
 
+def test_policy_failure_reason_rejects_high_scoring_needs_work_assessment() -> None:
+    assessment = Assessment(
+        repository="owner/archived",
+        url="https://github.com/owner/archived",
+        score=90,
+        max_score=100,
+        verdict="needs-work",
+        signals=(),
+        recommendations=(),
+        archived=True,
+    )
+
+    reason = _policy_failure_reason(
+        assessment,
+        fail_under=75,
+        fail_on_verdict=None,
+    )
+
+    assert reason is not None
+    assert "needs-work" in reason
+
+
 def test_main_reports_unsafe_api_url(capsys) -> None:
     assert main(["owner/repo", "--api-url", "http://api.example.test"]) == 2
 
@@ -374,6 +397,68 @@ def test_main_without_warn_only_and_without_policy_gate_is_unchanged(monkeypatch
 
     captured = capsys.readouterr()
     assert "Repository: owner/repo" in captured.out
+    assert captured.err == ""
+
+
+def test_main_fail_under_fails_high_scoring_archived_repository(monkeypatch, capsys) -> None:
+    class ArchivedClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _high_scoring_snapshot(archived=True)
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", ArchivedClient)
+
+    assert main(["owner/repo", "--fail-under", "75"]) == 1
+
+    captured = capsys.readouterr()
+    assert "Score:" in captured.out
+    assert "needs-work" in captured.out
+    assert "error: oss-pr-compass policy failed:" in captured.err
+    assert "needs-work" in captured.err
+
+
+def test_main_warn_only_warns_for_high_scoring_archived_repository(monkeypatch, capsys) -> None:
+    class ArchivedClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _high_scoring_snapshot(archived=True)
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", ArchivedClient)
+
+    assert main(["owner/repo", "--fail-under", "75", "--warn-only"]) == 0
+
+    captured = capsys.readouterr()
+    assert "warning: oss-pr-compass policy failed:" in captured.err
+    assert "needs-work" in captured.err
+
+
+def test_main_fail_under_preserves_non_archived_score_behavior(monkeypatch, capsys) -> None:
+    class ActiveClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _high_scoring_snapshot(archived=False)
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", ActiveClient)
+
+    assert main(["owner/repo", "--fail-under", "75"]) == 0
+
+    captured = capsys.readouterr()
+    assert "strong" in captured.out
     assert captured.err == ""
 
 
@@ -763,4 +848,34 @@ def _basic_snapshot() -> RepositorySnapshot:
         workflow_entries=frozenset({"ci.yml"}),
         merged_prs=(),
         open_pr_count=0,
+    )
+
+
+def _high_scoring_snapshot(*, archived: bool) -> RepositorySnapshot:
+    return RepositorySnapshot(
+        full_name="owner/repo",
+        html_url="https://github.com/owner/repo",
+        description="Example",
+        stars=5000,
+        forks=300,
+        archived=archived,
+        pushed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        default_branch="main",
+        license_spdx="MIT",
+        topics=("python",),
+        root_entries=frozenset(
+            {
+                "LICENSE",
+                "CONTRIBUTING.md",
+                "CODE_OF_CONDUCT.md",
+                ".github/PULL_REQUEST_TEMPLATE.md",
+                "tests",
+            }
+        ),
+        workflow_entries=frozenset({"ci.yml"}),
+        merged_prs=tuple({"merged_at": "2026-06-01T00:00:00Z"} for _ in range(24)),
+        open_pr_count=0,
+        labels=("good first issue",),
+        open_issues=(),
+        open_issue_count=0,
     )

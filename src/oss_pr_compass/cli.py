@@ -392,6 +392,8 @@ def _policy_failure_reason(
     score = _normalized_score(assessment)
     if fail_under is not None and score < fail_under:
         reasons.append(f"score {score:.1f} is below {fail_under:g}")
+    elif fail_under is not None and assessment.archived and assessment.verdict == "needs-work":
+        reasons.append("verdict is 'needs-work', so the score gate cannot pass on score alone")
 
     if fail_on_verdict is not None:
         actual_rank = VERDICT_RANK.get(assessment.verdict, -1)

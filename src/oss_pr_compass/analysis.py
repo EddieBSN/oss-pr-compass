@@ -108,6 +108,7 @@ def assess_repository(
         recommendations=recommendations,
         recommendation_details=recommendation_details,
         config_provenance=config_provenance,
+        archived=snapshot.archived,
     )
 
 

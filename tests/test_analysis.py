@@ -835,6 +835,7 @@ def test_archived_repository_cannot_receive_strong_verdict() -> None:
 
     assert assessment.score >= 75
     assert assessment.verdict == "needs-work"
+    assert assessment.archived is True
 
 
 def _snapshot_with_root_entries(entries: frozenset[str]) -> RepositorySnapshot:
