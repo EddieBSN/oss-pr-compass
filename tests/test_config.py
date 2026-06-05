@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from oss_pr_compass.config import (
+    MAX_DATE_WINDOW_DAYS,
     ScoreConfigError,
     parse_score_config,
     validate_score_config_fragment,
@@ -99,6 +100,20 @@ def test_parse_score_config_rejects_invalid_threshold_order() -> None:
               }
             }
             """
+        )
+
+
+def test_parse_score_config_rejects_huge_stale_unanswered_days() -> None:
+    with pytest.raises(ScoreConfigError, match=f"at most {MAX_DATE_WINDOW_DAYS}"):
+        parse_score_config(
+            '{"thresholds": {"stale_unanswered_days": 1000000000}}',
+        )
+
+
+def test_parse_score_config_rejects_huge_maintainer_response_window_days() -> None:
+    with pytest.raises(ScoreConfigError, match=f"at most {MAX_DATE_WINDOW_DAYS}"):
+        parse_score_config(
+            '{"thresholds": {"maintainer_response_window_days": 1000000000}}',
         )
 
 

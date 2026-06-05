@@ -11,6 +11,7 @@ from pathlib import Path
 
 from oss_pr_compass.analysis import assess_repository
 from oss_pr_compass.config import (
+    MAX_DATE_WINDOW_DAYS,
     ScoreConfig,
     ScoreConfigError,
     ScoreThresholds,
@@ -88,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.days <= 0:
         parser.error("--days must be greater than zero")
+    if args.days > MAX_DATE_WINDOW_DAYS:
+        parser.error(f"--days must be at most {MAX_DATE_WINDOW_DAYS}")
     if args.fail_under is not None and not 0 <= args.fail_under <= 100:
         parser.error("--fail-under must be between 0 and 100")
 

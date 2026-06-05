@@ -16,6 +16,15 @@ SIGNAL_NAMES = (
     "Open pull request queue",
     "Issue triage signals",
 )
+MAX_DATE_WINDOW_DAYS = 36_500
+DATE_WINDOW_THRESHOLD_FIELDS = frozenset(
+    {
+        "recent_activity_full_days",
+        "recent_activity_partial_days",
+        "stale_unanswered_days",
+        "maintainer_response_window_days",
+    }
+)
 
 
 class ScoreConfigError(ValueError):
@@ -197,12 +206,7 @@ def _parse_thresholds(
 
     updates: dict[str, int | float] = {}
     for key, value in raw.items():
-        if "ratio" in key:
-            updates[key] = _parse_ratio(value, f"{source} thresholds.{key}")
-        elif key == "stale_unanswered_minimum":
-            updates[key] = _parse_non_negative_int(value, f"{source} thresholds.{key}")
-        else:
-            updates[key] = _parse_positive_int(value, f"{source} thresholds.{key}")
+        updates[key] = _parse_threshold_value(key, value, source)
 
     thresholds = replace(base, **updates)
     _validate_thresholds(thresholds, source)
@@ -220,12 +224,7 @@ def _validate_threshold_fragment(raw: object, *, source: str) -> None:
 
     updates: dict[str, int | float] = {}
     for key, value in raw.items():
-        if "ratio" in key:
-            updates[key] = _parse_ratio(value, f"{source} thresholds.{key}")
-        elif key == "stale_unanswered_minimum":
-            updates[key] = _parse_non_negative_int(value, f"{source} thresholds.{key}")
-        else:
-            updates[key] = _parse_positive_int(value, f"{source} thresholds.{key}")
+        updates[key] = _parse_threshold_value(key, value, source)
 
     _validate_threshold_fragment_order(updates, source)
 
@@ -367,9 +366,22 @@ def _normalize_signal_name(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").replace("-", " ").split())
 
 
-def _parse_positive_int(value: Any, field_name: str) -> int:
+def _parse_threshold_value(key: str, value: Any, source: str) -> int | float:
+    field_name = f"{source} thresholds.{key}"
+    if "ratio" in key:
+        return _parse_ratio(value, field_name)
+    if key == "stale_unanswered_minimum":
+        return _parse_non_negative_int(value, field_name)
+    if key in DATE_WINDOW_THRESHOLD_FIELDS:
+        return _parse_positive_int(value, field_name, max_value=MAX_DATE_WINDOW_DAYS)
+    return _parse_positive_int(value, field_name)
+
+
+def _parse_positive_int(value: Any, field_name: str, *, max_value: int | None = None) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ScoreConfigError(f"{field_name} must be a positive integer.")
+    if max_value is not None and value > max_value:
+        raise ScoreConfigError(f"{field_name} must be at most {max_value}.")
     return value
 
 

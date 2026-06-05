@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from oss_pr_compass.cli import _policy_failure_reason, format_assessment, format_markdown, main
+from oss_pr_compass.config import MAX_DATE_WINDOW_DAYS
 from oss_pr_compass.github import GitHubError
 from oss_pr_compass.model import Assessment, Recommendation, RepositorySnapshot, Signal
 
@@ -186,6 +189,41 @@ def test_main_reports_unsafe_api_url(capsys) -> None:
     assert "error: --api-url must be an absolute HTTPS URL." in captured.err
 
 
+def test_main_rejects_days_above_maximum_before_network(monkeypatch, capsys) -> None:
+    class NetworkFailingClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            raise AssertionError("--days validation should fail before GitHub client creation")
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NetworkFailingClient)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["owner/repo", "--days", str(MAX_DATE_WINDOW_DAYS + 1)])
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert f"--days must be at most {MAX_DATE_WINDOW_DAYS}" in captured.err
+
+
+def test_main_accepts_maximum_days_boundary(monkeypatch, capsys) -> None:
+    class BoundaryClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            assert merged_since is not None
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", BoundaryClient)
+
+    assert main(["owner/repo", "--days", str(MAX_DATE_WINDOW_DAYS)]) == 0
+
+    captured = capsys.readouterr()
+    assert f"{MAX_DATE_WINDOW_DAYS} days" in captured.out
+
+
 def test_main_rejects_invalid_repository_before_api_paths(monkeypatch, capsys) -> None:
     class InvalidInputClient:
         def __init__(self, *, token: str | None, api_url: str) -> None:
@@ -360,6 +398,26 @@ def test_main_reports_duplicate_remote_config_keys(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert "error:" in captured.err
     assert "duplicate key 'thresholds.open_pr_queue_full'" in captured.err
+
+
+def test_main_rejects_huge_remote_date_window_before_assessment(monkeypatch, capsys) -> None:
+    class HugeRemoteDateWindowClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            pass
+
+        def fetch_snapshot(self, repository: str, *, merged_since: object) -> RepositorySnapshot:
+            return _basic_snapshot()
+
+        def fetch_file_text(self, repository: str, path: str) -> str | None:
+            return '{"thresholds": {"stale_unanswered_days": 1000000000}}'
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", HugeRemoteDateWindowClient)
+
+    assert main(["owner/repo"]) == 2
+
+    captured = capsys.readouterr()
+    assert "stale_unanswered_days must be at most" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_main_json_includes_remote_config_provenance(monkeypatch, capsys) -> None:

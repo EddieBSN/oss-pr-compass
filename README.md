@@ -44,6 +44,7 @@ oss-pr-compass pypa/pipx --fail-under 75
 
 Repository input can be `owner/name` or a GitHub repository URL. Query strings, fragments, and a repository `.git`
 suffix are normalized away; issue, pull request, tree, and blob URLs are rejected.
+`--days` accepts values from 1 through 36,500 days.
 
 Authenticated requests get higher GitHub API limits:
 
@@ -191,6 +192,7 @@ Example:
 ```
 
 Unknown keys and duplicate keys are rejected so configuration mistakes are visible in CI.
+Date-window thresholds accept values from 1 through 36,500 days.
 
 Accepted `disabled_signals` values are the signal names from the scoring table. The parser also accepts lowercase,
 dash-separated, or underscore-separated aliases such as `pull_request_template`. Accepted `disabled_signals_mode` values
@@ -200,8 +202,8 @@ Supported threshold keys:
 
 | Key | Default | Type | Validation |
 | --- | ---: | --- | --- |
-| `recent_activity_full_days` | 45 | integer | positive, must be <= `recent_activity_partial_days` |
-| `recent_activity_partial_days` | 90 | integer | positive |
+| `recent_activity_full_days` | 45 | integer | 1 to 36,500, must be <= `recent_activity_partial_days` |
+| `recent_activity_partial_days` | 90 | integer | 1 to 36,500 |
 | `merged_prs_full` | 20 | integer | positive, must be >= `merged_prs_partial` |
 | `merged_prs_partial` | 5 | integer | positive, must be >= `merged_prs_minimum` |
 | `merged_prs_minimum` | 1 | integer | positive |
@@ -212,10 +214,10 @@ Supported threshold keys:
 | `open_issue_queue_partial` | 100 | integer | positive |
 | `issue_label_ratio_full` | 0.75 | number | between 0 and 1, must be >= `issue_label_ratio_partial` |
 | `issue_label_ratio_partial` | 0.50 | number | between 0 and 1 |
-| `stale_unanswered_days` | 30 | integer | positive |
+| `stale_unanswered_days` | 30 | integer | 1 to 36,500 |
 | `stale_unanswered_partial_ratio` | 0.10 | number | between 0 and 1 |
 | `stale_unanswered_minimum` | 2 | integer | non-negative |
-| `maintainer_response_window_days` | 30 | integer | positive |
+| `maintainer_response_window_days` | 30 | integer | 1 to 36,500 |
 | `maintainer_response_full_ratio` | 0.25 | number | between 0 and 1, must be >= `maintainer_response_partial_ratio` |
 | `maintainer_response_partial_ratio` | 0.10 | number | between 0 and 1 |
 
