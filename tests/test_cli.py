@@ -182,6 +182,36 @@ def test_policy_failure_reason_checks_score_and_verdict() -> None:
     )
 
 
+def test_policy_failure_reason_verdict_threshold_truth_table() -> None:
+    expected = {
+        ("strong", "promising"): False,
+        ("strong", "needs-work"): False,
+        ("promising", "promising"): True,
+        ("promising", "needs-work"): False,
+        ("needs-work", "promising"): True,
+        ("needs-work", "needs-work"): True,
+    }
+
+    for (actual_verdict, threshold), should_fail in expected.items():
+        assessment = Assessment(
+            repository="owner/repo",
+            url="https://github.com/owner/repo",
+            score=80,
+            max_score=100,
+            verdict=actual_verdict,
+            signals=(),
+            recommendations=(),
+        )
+
+        reason = _policy_failure_reason(
+            assessment,
+            fail_under=None,
+            fail_on_verdict=threshold,
+        )
+
+        assert (reason is not None) is should_fail
+
+
 def test_main_reports_unsafe_api_url(capsys) -> None:
     assert main(["owner/repo", "--api-url", "http://api.example.test"]) == 2
 
@@ -237,6 +267,23 @@ def test_main_rejects_warn_only_without_policy_gate_before_network(monkeypatch, 
     assert exc.value.code == 2
     captured = capsys.readouterr()
     assert "--warn-only requires --fail-under or --fail-on-verdict" in captured.err
+
+
+def test_main_rejects_fail_on_verdict_strong_before_network(monkeypatch, capsys) -> None:
+    class NetworkFailingClient:
+        def __init__(self, *, token: str | None, api_url: str) -> None:
+            raise AssertionError(
+                "--fail-on-verdict validation should fail before GitHub client creation"
+            )
+
+    monkeypatch.setattr("oss_pr_compass.cli.GitHubClient", NetworkFailingClient)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["owner/repo", "--fail-on-verdict", "strong"])
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid choice: 'strong'" in captured.err
 
 
 def test_main_warn_only_allows_fail_under_policy_warning(monkeypatch, capsys) -> None:
